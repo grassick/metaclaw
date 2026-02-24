@@ -1,0 +1,12 @@
+{
+  "name": "metaclaw",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names client,server --prefix-colors cyan,yellow \"pnpm --filter client dev\" \"pnpm --filter server dev\"",
+    "build": "pnpm --filter client build",
+    "typecheck": "pnpm --filter client typecheck && pnpm --filter server typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
