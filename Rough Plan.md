@@ -171,10 +171,13 @@ These are the privileged tools the agent always has. They are **not** stored in 
 
 | Tool                                           | Description                                                                                                       |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `edit_system_prompt`                           | Replace the system prompt. Saves previous version to history.                                                     |
-| `edit_learned_notes`                           | Append to or replace the learned notes section.                                                                   |
+| `read_system_prompt`                           | Read the current stored system prompt (ground truth, may differ from in-context version after mid-conversation edits). |
+| `edit_system_prompt`                           | Edit the system prompt with granular operations: replace, find_replace, append, prepend, delete. Saves previous version to history. |
+| `read_learned_notes`                           | Read the current learned notes.                                                                                   |
+| `edit_learned_notes`                           | Edit learned notes with the same operations as edit_system_prompt.                                                |
 | `get_state` / `set_state` / `delete_state`     | Read/write/delete keys in `agent_state`.                                                                          |
 | `list_state_keys`                              | List all keys (with optional prefix filter).                                                                      |
+| `db_sql` / `db_schema`                         | Agent's own SQLite database (`agent_data.db`) for structured data storage and SQL queries. Separate from the app DB. |
 | `create_tool`                                  | Create a new tool (name, description, parameter schema, code).                                                    |
 | `update_tool`                                  | Update an existing tool's code, description, or schema.                                                           |
 | `delete_tool` / `enable_tool` / `disable_tool` | Manage tool lifecycle.                                                                                            |
@@ -190,6 +193,7 @@ These are the privileged tools the agent always has. They are **not** stored in 
 | `send_message`                                 | Send a text message to the user (no pause).                                                                       |
 | `fetch_url`                                    | Fetch a URL with SSRF protection (uses `safeFetch`).                                                              |
 | `ask_user`                                     | Ask the user a question in chat. Returns `asPendingToolCall: true`.                                               |
+| `browser_*`                                    | Browser tools (navigate, screenshot, click, type, extract_text, extract_html, evaluate, close) via headless Playwright. |
 
 
 ### Dynamic Tool Execution
