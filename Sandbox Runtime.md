@@ -1,6 +1,6 @@
 # Sandbox Runtime
 
-This defines everything available to agent-authored code running in isolated-vm — both agent-created tools and ad-hoc `run_sandbox_code` invocations. There is no `require`, no `import`, no Node.js APIs, no file system access. Every external capability is injected by the host as a callback.
+This defines everything available to agent-authored code running in isolated-vm — both agent-created tools and ad-hoc `run_sandbox_code` invocations. There are no Node.js APIs and no file system access. Every external capability is injected by the host as a callback. Code reuse across tools is handled by `require()`, which loads agent-created libraries.
 
 ## Quick reference
 
@@ -29,9 +29,8 @@ state.keys(prefix?: string): Promise<string[]>
 db.sql(sql: string, params?: any[]): Promise<QueryResult | WriteResult>
 db.schema(): Promise<SchemaResult>
 
-// Call other tools
-tools.call(name: string, args: Record<string, any>): Promise<any>
-tools.list(): Promise<ToolInfo[]>
+// Libraries (agent-created shared code)
+require(name: string): any
 
 // Browser (headless Chromium, server-side)
 browser.navigate(url: string, options?: NavigateOptions): Promise<PageInfo>
@@ -132,21 +131,30 @@ db.schema(): Promise<{
 }>
 ```
 
-### `tools`
+### `require(name)`
 
-Call other tools from within sandbox code. This includes both meta-tools and other agent-created tools. Enables composability — tools that orchestrate other tools.
+Load an agent-created library by name. Libraries are stored in the `agent_libraries` table and managed via the `create_library` / `update_library` / etc. meta-tools. This is the mechanism for code reuse across tools and `run_sandbox_code` invocations.
+
+Uses CommonJS conventions — libraries export via `exports.foo = ...` or `module.exports = ...`.
 
 ```typescript
-// Execute a tool by name and return its result
-tools.call(name: string, args: Record<string, any>): Promise<any>
+// Loading a library
+const { formatDate, retry } = require('utils')
+const { callAPI } = require('api_client')
 
-// List available tools (name + description)
-tools.list(): Promise<{ name: string, description: string }[]>
+// Libraries can require other libraries
+// (inside "api_client" library code:)
+const { retry } = require('utils')
+exports.callAPI = async function(endpoint, params) {
+  return retry(() => fetch(endpoint, { method: 'POST', body: JSON.stringify(params) }), 3)
+}
 ```
 
-`tools.call` goes through the same execution pipeline as a normal tool call: argument validation, sandbox execution (for agent-created tools), etc. Recursive calls are capped at a depth limit (default: 3) to prevent infinite loops.
+**Caching:** Each library executes at most once per sandbox invocation. If multiple tools/libraries require the same dependency, the cached exports are returned.
 
-**Restriction:** Tools that pause for user input (`render_and_wait`, `render_blocks`, `ask_user`) cannot be called from sandbox code — they only work as top-level LLM tool calls.
+**Circular dependencies:** Detected and thrown as an error.
+
+**Not Node.js require:** This only loads agent-created libraries by name. It cannot load npm packages, file paths, or Node.js built-ins.
 
 ### `browser`
 
@@ -203,7 +211,7 @@ const resp = await fetch(`https://api.openweathermap.org/data/2.5/weather?appid=
 
 ## What's NOT available
 
-- `require` / `import` — no module system
+- `import` — no ES module syntax (use `require()` for agent libraries)
 - `process`, `Buffer`, `__dirname`, `__filename` — no Node.js globals
 - `fs`, `child_process`, `net`, `os` — no Node.js built-ins
 - `XMLHttpRequest`, `WebSocket` — use `fetch` instead
@@ -216,7 +224,7 @@ const resp = await fetch(`https://api.openweathermap.org/data/2.5/weather?appid=
 |-------|---------|
 | Execution timeout | 30 seconds |
 | Memory | 128 MB per isolate |
-| `tools.call` recursion depth | 3 |
+| `require()` max depth | 10 (nested library requires) |
 | `db.sql` query timeout | 5 seconds |
 | `db.sql` max rows returned | 1000 |
 | `fetch` timeout | 30 seconds |

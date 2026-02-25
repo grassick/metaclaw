@@ -397,6 +397,99 @@ Returns the full definition including code and parameter schema.
 
 ---
 
+## Libraries
+
+Shared code modules stored in `agent_libraries`. Tools and `run_sandbox_code` load them via `require('name')` in the sandbox. Libraries can require other libraries. This is the mechanism for building up reusable code — utilities, API wrappers, data transformers, etc.
+
+### `create_library`
+
+```json
+{
+  "name": "create_library",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Unique library name (snake_case)" },
+      "description": { "type": "string", "description": "What this library provides" },
+      "code": { "type": "string", "description": "CommonJS module code. Export via `exports.foo = ...` or `module.exports = ...`. Can `require()` other libraries." }
+    },
+    "required": ["name", "description", "code"]
+  }
+}
+```
+
+**Returns:** `{ name: string, version: 1 }`
+
+### `update_library`
+
+```json
+{
+  "name": "update_library",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Name of the library to update" },
+      "description": { "type": "string" },
+      "code": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name: string, version: number }`
+
+### `delete_library`
+
+```json
+{
+  "name": "delete_library",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ deleted: boolean }`
+
+### `list_libraries`
+
+```json
+{
+  "name": "list_libraries",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ libraries: { name, description, version }[] }`
+
+### `read_library`
+
+```json
+{
+  "name": "read_library",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name, description, code, version }`
+
+---
+
 ## Code Execution
 
 ### `run_sandbox_code`
@@ -901,6 +994,11 @@ Close the current browser context and release resources.
 | `disable_tool`        | Tool management   | No     | Disable a tool without deleting it               |
 | `list_tools`          | Tool management   | No     | List all agent-defined tools                     |
 | `read_tool`           | Tool management   | No     | Read a tool's full definition including code     |
+| `create_library`      | Libraries         | No     | Create a shared code library                     |
+| `update_library`      | Libraries         | No     | Update a library's code or description           |
+| `delete_library`      | Libraries         | No     | Delete a library                                 |
+| `list_libraries`      | Libraries         | No     | List all libraries                               |
+| `read_library`        | Libraries         | No     | Read a library's full code                       |
 | `run_sandbox_code`    | Code execution    | No     | Execute ad-hoc JS in sandbox                     |
 | `create_ui_component` | UI components     | No     | Create a stored React component                  |
 | `update_ui_component` | UI components     | No     | Update a stored component                        |

@@ -107,6 +107,21 @@ Each row is a tool the agent has created.
 | `modified_on`      | timestamptz |                                                        |
 
 
+### `agent_libraries` (new)
+
+Shared code modules loadable via `require('name')` in the sandbox. Enables code reuse across tools and `run_sandbox_code`.
+
+
+| Column        | Type        | Description                                              |
+| ------------- | ----------- | -------------------------------------------------------- |
+| `_id`         | text        | Library name (unique, snake_case)                        |
+| `description` | text        | What this library provides                               |
+| `code`        | text        | CommonJS module code (exports via `exports` or `module.exports`) |
+| `version`     | integer     | Auto-incremented on update                               |
+| `created_on`  | timestamptz |                                                          |
+| `modified_on` | timestamptz |                                                          |
+
+
 ### `agent_ui_components` (new)
 
 Reusable UI components / "pages" the agent has created.
@@ -183,6 +198,8 @@ These are the privileged tools the agent always has. They are **not** stored in 
 | `delete_tool` / `enable_tool` / `disable_tool` | Manage tool lifecycle.                                                                                            |
 | `list_tools`                                   | List all tools with descriptions and enabled status.                                                              |
 | `read_tool`                                    | Read a tool's full definition including code.                                                                     |
+| `create_library` / `update_library` / `delete_library` | CRUD for shared code libraries. Loaded via `require('name')` in the sandbox.                               |
+| `list_libraries` / `read_library`              | List libraries or read a library's full code.                                                                     |
 | `run_sandbox_code`                             | Execute ad-hoc JavaScript in isolated-vm (for exploration).                                                       |
 | `create_ui_component`                          | Create a named React component.                                                                                   |
 | `update_ui_component`                          | Update an existing component.                                                                                     |
