@@ -9,6 +9,8 @@ Single-user, self-hosted. Not a platform — just a thing that works for you and
 - [Rough Plan](./Rough%20Plan.md) — architecture, database schema, build phases
 - [Built-in Tools](./Built-in%20Tools.md) — all meta-tools with JSON schemas
 - [Technology Choices](./Technology%20Choices.md) — stack decisions (SQLite, Vercel AI SDK, etc.)
+- [Sandbox Runtime](./Sandbox%20Runtime.md) — everything agent-authored code can touch
+- [Frontend Design](./Frontend%20Design.md) — layout, session management, component rendering
 
 ## Structure
 
