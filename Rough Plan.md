@@ -72,9 +72,17 @@ Use `IntegratorAgentImplementation.ts` as a reference for implementing the `Agen
 
 A single PostgreSQL database with these tables:
 
-### `agent_sessions` (already exists in copied code)
+### `agent_sessions` (already exists in copied code, extended)
 
-Stores conversation history, status, pending tool calls, token usage. No changes needed.
+Stores conversation history, status, pending tool calls, token usage. Add these columns for sub-session support and token limits:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `parent_session_id` | text | FK to parent session (null for top-level sessions) |
+| `parent_tool_call_id` | text | The `wait_for_sessions` tool call ID this sub-session reports to |
+| `model` | text | Model used for this session (may differ from parent for cheaper sub-sessions) |
+| `token_limit` | integer | Max tokens before the session is stopped (null = system default) |
+| `token_usage` | integer | Tokens consumed so far |
 
 ### `agent_config` (new)
 
@@ -235,6 +243,9 @@ These are the privileged tools the agent always has. They are **not** stored in 
 | `list_scheduled_tasks`                         | List all scheduled tasks.                                                                                         |
 | `cancel_scheduled_task`                        | Delete a scheduled task.                                                                                          |
 | `enable_scheduled_task` / `disable_scheduled_task` | Pause/resume a scheduled task without deleting it.                                                            |
+| `spawn_session`                                | Spawn a sub-session with a task, optional model override, and optional token limit. Returns immediately.          |
+| `wait_for_sessions`                            | Pause until specified sub-sessions call `report_result`. Returns their results. `asPendingToolCall: true`.        |
+| `report_result`                                | Sub-sessions only. Declare "I'm done" and send results to parent. Ends the session.                              |
 
 
 ### Dynamic Tool Execution

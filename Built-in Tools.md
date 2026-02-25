@@ -15,19 +15,37 @@ Each "step" runs this loop:
 1. Something wakes the session: a user message, a scheduled task firing, or a user interacting with a pending UI (tool response).
 2. The LLM is called with the conversation history.
 3. The LLM responds with either:
-   - **Text only** → the text is added to the history, the loop ends, session goes **idle**.
-   - **Tool calls** → each tool is executed, results are added to the history, go to step 2.
-   - **A tool call with `asPendingToolCall`** (e.g. `render_and_wait`, `ask_user`) → the session goes **waiting_for_input**. The loop pauses until the user responds.
+  - **Text only** → the text is added to the history, the loop ends, session goes **idle**.
+  - **Tool calls** → each tool is executed, results are added to the history, go to step 2.
+  - **A tool call with `asPendingToolCall`** (e.g. `render_and_wait`, `ask_user`) → the session goes **waiting_for_input**. The loop pauses until the user responds.
 
 ### Session states
 
-| State | Meaning | What wakes it |
-|-------|---------|---------------|
-| `idle` | The agent has finished. No processing, no pending input. | User message, scheduled task |
-| `running` | The LLM is being called or tools are executing. | (internal — loop is active) |
-| `waiting_for_input` | A pending tool call is waiting for the user. | User interacts with the rendered UI or answers the question |
 
-The agent doesn't need a "go to sleep" tool. It goes idle naturally when the LLM produces a text response without tool calls. After calling `schedule_task`, the agent says "Done, I've scheduled that" — that's text, no tool calls, session is idle. The scheduler wakes it later by injecting the task message, and the loop runs again.
+| State                 | Meaning                                                             | What wakes it                                               |
+| --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `idle`                | Not processing, but can be woken. May have pending scheduled tasks. | User message, scheduled task, sub-session completion        |
+| `running`             | The LLM is being called or tools are executing.                     | (internal — loop is active)                                 |
+| `waiting_for_input`   | A pending tool call is waiting for the user.                        | User interacts with the rendered UI or answers the question |
+| `completed`           | Finished. Terminal state — cannot be woken.                         | (nothing — session is done)                                 |
+| `token_limit_reached` | The session hit its token cap mid-step.                             | User clicks "Continue" in the UI to extend the limit        |
+
+
+The agent goes `idle` naturally when the LLM produces a text response without tool calls. `idle` means "not doing anything right now, but could be woken later" — by a user message, a scheduled task, etc.
+
+`completed` is a terminal state. For sub-sessions, this is set by calling `report_result` — the sub-session explicitly declares "I'm done, here are my results." For top-level sessions, `completed` can be set by the user archiving the conversation from the UI.
+
+### Sub-sessions
+
+Sessions can spawn sub-sessions via `spawn_session`. A sub-session is a full session with its own conversation history, linked to its parent by `parent_session_id`. Sub-sessions appear in the UI nested under their parent. They have full access to all shared resources and can interact with the user (the UI shows them as waiting for input, and the user can click into them). See the **Sub-Sessions** section below for tool details.
+
+### Token limits
+
+Every session has a token cap — the maximum tokens (input + output) it can consume before being stopped. This prevents runaway costs from agent loops that go too deep.
+
+- **System-wide default** applies to all sessions (configurable in server settings).
+- **Sub-sessions** can be given a tighter limit by the parent via the `token_limit` parameter on `spawn_session`.
+- **User override**: when any session (top-level or sub) hits its limit, the UI shows a "Continue" button that extends the limit and resumes processing.
 
 ---
 
@@ -96,13 +114,15 @@ Supports multiple edit operations so the agent doesn't have to replace the entir
 }
 ```
 
-| Operation | Required fields | Behavior |
-|-----------|----------------|----------|
-| `replace` | `content` | Replace the entire prompt |
+
+| Operation      | Required fields   | Behavior                                                                                                                       |
+| -------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `replace`      | `content`         | Replace the entire prompt                                                                                                      |
 | `find_replace` | `find`, `replace` | Replace first occurrence of `find` with `replace` (or all occurrences if `replace_all` is true). Fails if `find` is not found. |
-| `append` | `content` | Add text to the end of the prompt |
-| `prepend` | `content` | Add text to the beginning of the prompt |
-| `delete` | `content` | Remove first occurrence of `content`. Fails if not found. |
+| `append`       | `content`         | Add text to the end of the prompt                                                                                              |
+| `prepend`      | `content`         | Add text to the beginning of the prompt                                                                                        |
+| `delete`       | `content`         | Remove first occurrence of `content`. Fails if not found.                                                                      |
+
 
 **Returns:** `{ version: number }`
 
@@ -1096,52 +1116,173 @@ Pause or resume a task without deleting it.
 
 ---
 
+## Sub-Sessions
+
+A session can spawn sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism or a cheaper model. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
+
+Sub-sessions have full access to all shared resources (tools, libraries, state, database, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
+
+Sub-sessions can spawn their own sub-sessions (max depth: 3). They can modify shared state (last-write-wins, same as parallel sessions).
+
+### `spawn_session`
+
+Create and start a sub-session. Returns immediately — the sub-session runs independently.
+
+```json
+{
+  "name": "spawn_session",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "task": { "type": "string", "description": "The instruction or message for the sub-session. This is what the sub-agent sees as its initial user message." },
+      "model": { "type": "string", "description": "Model to use for the sub-session. Defaults to the current session's model. Use a cheaper/faster model for simple tasks." },
+      "token_limit": { "type": "number", "description": "Max tokens the sub-session can consume before being stopped. Defaults to the system-wide per-session limit." }
+    },
+    "required": ["task"]
+  }
+}
+```
+
+The sub-session inherits the current system prompt and learned notes. All tools, libraries, state, and database access are available.
+
+**Returns:** `{ id: string }` — the sub-session ID.
+
+### `wait_for_sessions`
+
+Pause the current session until the specified sub-sessions finish. This is an `asPendingToolCall` — the parent goes idle until results are ready.
+
+A sub-session is "finished" when it reaches `completed` (called `report_result`), `error` (something went wrong), or `token_limit_reached` (hit its token cap). A sub-session that is merely `idle` or `waiting_for_input` is not finished — the parent keeps waiting.
+
+```json
+{
+  "name": "wait_for_sessions",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "ids": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Sub-session IDs to wait for"
+      }
+    },
+    "required": ["ids"]
+  }
+}
+```
+
+**Returns:**
+
+```json
+{
+  "results": [
+    { "id": "sub_abc", "status": "completed", "result": "Here's what I found about topic A..." },
+    { "id": "sub_def", "status": "completed", "result": "Topic B analysis: ..." },
+    { "id": "sub_ghi", "status": "token_limit_reached", "result": "Partial findings so far..." },
+    { "id": "sub_xyz", "status": "error", "error": "Timed out after 120s" }
+  ]
+}
+```
+
+The `result` field contains whatever the sub-session passed to `report_result`. For `token_limit_reached`, it's the last assistant message (best effort).
+
+**Pauses:** Yes.
+
+### `report_result`
+
+Only available in sub-sessions. Declares "I'm done" and sends a result back to the parent. Transitions the session to `completed` — a terminal state. The session cannot be woken after this (scheduled tasks for this session are cancelled).
+
+```json
+{
+  "name": "report_result",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "result": { "type": "string", "description": "The result to send back to the parent session" }
+    },
+    "required": ["result"]
+  }
+}
+```
+
+This tool ends the session immediately — no further tool calls or text output after this. The parent's `wait_for_sessions` receives the result.
+
+**Returns:** (nothing — the session ends)
+
+### Token limits
+
+Every session has a token cap — the maximum tokens it can consume (input + output) before being stopped. This prevents runaway costs.
+
+- **System-wide default:** Configured in server settings (e.g., 100k tokens per session).
+- **Per sub-session override:** The parent can set a lower `token_limit` when spawning. Useful for cheap tasks that shouldn't need much.
+- **User override:** When a session hits its limit, the UI shows a "Continue" button. The user can extend the limit and let it keep going.
+
+When a session hits its token limit mid-step, the current LLM call is aborted and the session enters `token_limit_reached` state. If it's a sub-session, `wait_for_sessions` returns with whatever partial result exists.
+
+### Limits
+
+
+| Limit                                  | Default      |
+| -------------------------------------- | ------------ |
+| Max concurrent sub-sessions per parent | 10           |
+| Max nesting depth                      | 3            |
+| Sub-session execution timeout          | 120 seconds  |
+| Default token limit per session        | configurable |
+
+
+---
+
 ## Summary Table
 
-| Tool                  | Category          | Pauses | Description                                      |
-| --------------------- | ----------------- | ------ | ------------------------------------------------ |
-| `read_system_prompt`  | Self-modification | No     | Read the current stored system prompt             |
-| `edit_system_prompt`  | Self-modification | No     | Edit the system prompt (replace, find/replace, append, prepend, delete) |
-| `read_learned_notes`  | Self-modification | No     | Read the current learned notes                   |
-| `edit_learned_notes`  | Self-modification | No     | Edit learned notes (same operations as prompt)   |
-| `get_state`           | State             | No     | Read a state key                                 |
-| `set_state`           | State             | No     | Write a state key                                |
-| `delete_state`        | State             | No     | Delete a state key                               |
-| `list_state_keys`     | State             | No     | List keys with optional prefix filter            |
-| `db_sql`              | Database          | No     | Run any SQL on the agent's SQLite DB             |
-| `db_schema`           | Database          | No     | List all tables and their columns                |
-| `create_tool`         | Tool management   | No     | Create a new agent-defined tool                  |
-| `update_tool`         | Tool management   | No     | Update a tool's code, schema, or description     |
-| `delete_tool`         | Tool management   | No     | Delete a tool                                    |
-| `enable_tool`         | Tool management   | No     | Enable a disabled tool                           |
-| `disable_tool`        | Tool management   | No     | Disable a tool without deleting it               |
-| `list_tools`          | Tool management   | No     | List all agent-defined tools                     |
-| `read_tool`           | Tool management   | No     | Read a tool's full definition including code     |
-| `create_library`      | Libraries         | No     | Create a shared code library                     |
-| `update_library`      | Libraries         | No     | Update a library's code or description           |
-| `delete_library`      | Libraries         | No     | Delete a library                                 |
-| `list_libraries`      | Libraries         | No     | List all libraries                               |
-| `read_library`        | Libraries         | No     | Read a library's full code                       |
-| `run_sandbox_code`    | Code execution    | No     | Execute ad-hoc JS in sandbox                     |
-| `create_ui_component` | UI components     | No     | Create a stored React component                  |
-| `update_ui_component` | UI components     | No     | Update a stored component                        |
-| `delete_ui_component` | UI components     | No     | Delete a stored component                        |
-| `list_ui_components`  | UI components     | No     | List stored components                           |
-| `render_and_wait`     | UI rendering      | Yes    | Render a component and wait for interaction      |
-| `render_blocks`       | UI rendering      | Yes    | Render structured blocks and wait for interaction|
-| `send_message`        | UI rendering      | No     | Send a chat message (no pause)                   |
-| `ask_user`            | User interaction  | Yes    | Ask a question and wait for response             |
-| `fetch_url`           | Web               | No     | HTTP request with SSRF protection                |
-| `browser_navigate`    | Browser           | No     | Navigate to a URL                                |
-| `browser_screenshot`  | Browser           | No     | Capture a page/element screenshot                |
-| `browser_click`       | Browser           | No     | Click an element                                 |
-| `browser_type`        | Browser           | No     | Type into an input                               |
-| `browser_extract_text`| Browser           | No     | Extract text from the page                       |
-| `browser_extract_html`| Browser           | No     | Extract HTML from an element                     |
-| `browser_evaluate`    | Browser           | No     | Run JS in page context                           |
-| `browser_close`       | Browser           | No     | Close the browser context                        |
-| `schedule_task`       | Scheduling        | No     | Schedule a one-shot or recurring task            |
-| `list_scheduled_tasks`| Scheduling        | No     | List all scheduled tasks                         |
-| `cancel_scheduled_task`| Scheduling       | No     | Delete a scheduled task                          |
-| `enable_scheduled_task`| Scheduling       | No     | Resume a paused task                             |
-| `disable_scheduled_task`| Scheduling     | No     | Pause a task without deleting it                 |
+
+| Tool                     | Category          | Pauses | Description                                                             |
+| ------------------------ | ----------------- | ------ | ----------------------------------------------------------------------- |
+| `read_system_prompt`     | Self-modification | No     | Read the current stored system prompt                                   |
+| `edit_system_prompt`     | Self-modification | No     | Edit the system prompt (replace, find/replace, append, prepend, delete) |
+| `read_learned_notes`     | Self-modification | No     | Read the current learned notes                                          |
+| `edit_learned_notes`     | Self-modification | No     | Edit learned notes (same operations as prompt)                          |
+| `get_state`              | State             | No     | Read a state key                                                        |
+| `set_state`              | State             | No     | Write a state key                                                       |
+| `delete_state`           | State             | No     | Delete a state key                                                      |
+| `list_state_keys`        | State             | No     | List keys with optional prefix filter                                   |
+| `db_sql`                 | Database          | No     | Run any SQL on the agent's SQLite DB                                    |
+| `db_schema`              | Database          | No     | List all tables and their columns                                       |
+| `create_tool`            | Tool management   | No     | Create a new agent-defined tool                                         |
+| `update_tool`            | Tool management   | No     | Update a tool's code, schema, or description                            |
+| `delete_tool`            | Tool management   | No     | Delete a tool                                                           |
+| `enable_tool`            | Tool management   | No     | Enable a disabled tool                                                  |
+| `disable_tool`           | Tool management   | No     | Disable a tool without deleting it                                      |
+| `list_tools`             | Tool management   | No     | List all agent-defined tools                                            |
+| `read_tool`              | Tool management   | No     | Read a tool's full definition including code                            |
+| `create_library`         | Libraries         | No     | Create a shared code library                                            |
+| `update_library`         | Libraries         | No     | Update a library's code or description                                  |
+| `delete_library`         | Libraries         | No     | Delete a library                                                        |
+| `list_libraries`         | Libraries         | No     | List all libraries                                                      |
+| `read_library`           | Libraries         | No     | Read a library's full code                                              |
+| `run_sandbox_code`       | Code execution    | No     | Execute ad-hoc JS in sandbox                                            |
+| `create_ui_component`    | UI components     | No     | Create a stored React component                                         |
+| `update_ui_component`    | UI components     | No     | Update a stored component                                               |
+| `delete_ui_component`    | UI components     | No     | Delete a stored component                                               |
+| `list_ui_components`     | UI components     | No     | List stored components                                                  |
+| `render_and_wait`        | UI rendering      | Yes    | Render a component and wait for interaction                             |
+| `render_blocks`          | UI rendering      | Yes    | Render structured blocks and wait for interaction                       |
+| `send_message`           | UI rendering      | No     | Send a chat message (no pause)                                          |
+| `ask_user`               | User interaction  | Yes    | Ask a question and wait for response                                    |
+| `fetch_url`              | Web               | No     | HTTP request with SSRF protection                                       |
+| `browser_navigate`       | Browser           | No     | Navigate to a URL                                                       |
+| `browser_screenshot`     | Browser           | No     | Capture a page/element screenshot                                       |
+| `browser_click`          | Browser           | No     | Click an element                                                        |
+| `browser_type`           | Browser           | No     | Type into an input                                                      |
+| `browser_extract_text`   | Browser           | No     | Extract text from the page                                              |
+| `browser_extract_html`   | Browser           | No     | Extract HTML from an element                                            |
+| `browser_evaluate`       | Browser           | No     | Run JS in page context                                                  |
+| `browser_close`          | Browser           | No     | Close the browser context                                               |
+| `schedule_task`          | Scheduling        | No     | Schedule a one-shot or recurring task                                   |
+| `list_scheduled_tasks`   | Scheduling        | No     | List all scheduled tasks                                                |
+| `cancel_scheduled_task`  | Scheduling        | No     | Delete a scheduled task                                                 |
+| `enable_scheduled_task`  | Scheduling        | No     | Resume a paused task                                                    |
+| `disable_scheduled_task` | Scheduling        | No     | Pause a task without deleting it                                        |
+| `spawn_session`          | Sub-sessions      | No     | Spawn a sub-session with a task                                         |
+| `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
+| `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
+
+
