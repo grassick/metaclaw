@@ -4,6 +4,33 @@ These tools are always available to the LLM. They are hardcoded in `PersonalAgen
 
 ---
 
+## Session Lifecycle
+
+A session is a durable conversation. It doesn't require anyone to be watching — the agent can run, produce output, and go idle. The user sees everything when they open the session later.
+
+### Agent loop
+
+Each "step" runs this loop:
+
+1. Something wakes the session: a user message, a scheduled task firing, or a user interacting with a pending UI (tool response).
+2. The LLM is called with the conversation history.
+3. The LLM responds with either:
+   - **Text only** → the text is added to the history, the loop ends, session goes **idle**.
+   - **Tool calls** → each tool is executed, results are added to the history, go to step 2.
+   - **A tool call with `asPendingToolCall`** (e.g. `render_and_wait`, `ask_user`) → the session goes **waiting_for_input**. The loop pauses until the user responds.
+
+### Session states
+
+| State | Meaning | What wakes it |
+|-------|---------|---------------|
+| `idle` | The agent has finished. No processing, no pending input. | User message, scheduled task |
+| `running` | The LLM is being called or tools are executing. | (internal — loop is active) |
+| `waiting_for_input` | A pending tool call is waiting for the user. | User interacts with the rendered UI or answers the question |
+
+The agent doesn't need a "go to sleep" tool. It goes idle naturally when the LLM produces a text response without tool calls. After calling `schedule_task`, the agent says "Done, I've scheduled that" — that's text, no tool calls, session is idle. The scheduler wakes it later by injecting the task message, and the loop runs again.
+
+---
+
 ## Self-Modification
 
 The agent's identity is stored as two separate text documents:
@@ -973,6 +1000,102 @@ Close the current browser context and release resources.
 
 ---
 
+## Scheduling
+
+The agent can schedule tasks to run later — either one-shot or recurring. The server polls the `agent_scheduled_tasks` table on an interval (~30s). When a task is due, it injects the task's `message` into the originating session and kicks off an agent step. The agent runs normally — produces messages, calls tools, etc. — and goes idle when done. The user sees the results next time they open the session.
+
+Tasks always fire in the session that created them. Spawning new sessions is a separate concern (sub-agents, TBD).
+
+### `schedule_task`
+
+```json
+{
+  "name": "schedule_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Human-readable label for the task" },
+      "message": { "type": "string", "description": "The message to inject into the session when the task fires. This is what the agent will see as its prompt." },
+      "at": { "type": "string", "description": "For one-shot tasks: ISO 8601 timestamp of when to fire (e.g. 2026-02-25T09:00:00Z)" },
+      "cron": { "type": "string", "description": "For recurring tasks: cron expression (e.g. '0 9 * * MON' for every Monday at 9am)" }
+    },
+    "required": ["name", "message"]
+  }
+}
+```
+
+Exactly one of `at` or `cron` must be provided.
+
+**Returns:** `{ id: string, name: string, next_run: string }`
+
+### `list_scheduled_tasks`
+
+```json
+{
+  "name": "list_scheduled_tasks",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "include_disabled": { "type": "boolean", "description": "Include paused tasks. Default: false." }
+    },
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ tasks: { id, name, message, type, next_run, last_run, enabled }[] }`
+
+### `cancel_scheduled_task`
+
+```json
+{
+  "name": "cancel_scheduled_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "Task ID to cancel" }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+**Returns:** `{ deleted: boolean }`
+
+### `enable_scheduled_task` / `disable_scheduled_task`
+
+Pause or resume a task without deleting it.
+
+```json
+{
+  "name": "enable_scheduled_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string" }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+```json
+{
+  "name": "disable_scheduled_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string" }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+**Returns:** `{ id: string, enabled: boolean }`
+
+---
+
 ## Summary Table
 
 | Tool                  | Category          | Pauses | Description                                      |
@@ -1017,3 +1140,8 @@ Close the current browser context and release resources.
 | `browser_extract_html`| Browser           | No     | Extract HTML from an element                     |
 | `browser_evaluate`    | Browser           | No     | Run JS in page context                           |
 | `browser_close`       | Browser           | No     | Close the browser context                        |
+| `schedule_task`       | Scheduling        | No     | Schedule a one-shot or recurring task            |
+| `list_scheduled_tasks`| Scheduling        | No     | List all scheduled tasks                         |
+| `cancel_scheduled_task`| Scheduling       | No     | Delete a scheduled task                          |
+| `enable_scheduled_task`| Scheduling       | No     | Resume a paused task                             |
+| `disable_scheduled_task`| Scheduling     | No     | Pause a task without deleting it                 |

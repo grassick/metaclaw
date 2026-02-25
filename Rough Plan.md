@@ -150,6 +150,26 @@ Key-value store for persistent agent state.
 | `modified_on` | timestamptz |                         |
 
 
+### `agent_scheduled_tasks` (new)
+
+Scheduled and recurring tasks. The server polls this table on an interval (~30s) and injects the task's message into the originating session when due. Tasks always fire in the session that created them.
+
+
+| Column        | Type        | Description                                                        |
+| ------------- | ----------- | ------------------------------------------------------------------ |
+| `_id`         | text        | Unique task ID (generated)                                         |
+| `name`        | text        | Human-readable label                                               |
+| `message`     | text        | Message injected into the session when the task fires              |
+| `type`        | text        | `once` or `cron`                                                   |
+| `at`          | timestamptz | For `once`: when to fire                                           |
+| `cron`        | text        | For `cron`: cron expression (e.g. `0 9 * * MON`)                  |
+| `session_id`  | text        | FK to `agent_sessions` — the session that created this task        |
+| `enabled`     | boolean     | Can be paused without deleting                                     |
+| `next_run`    | timestamptz | Pre-computed next fire time (for efficient polling)                |
+| `last_run`    | timestamptz | When it last fired (null if never)                                 |
+| `created_on`  | timestamptz |                                                                    |
+
+
 ### `agent_config_history` (new)
 
 Audit log for prompt/notes changes (for rollback).
@@ -211,6 +231,10 @@ These are the privileged tools the agent always has. They are **not** stored in 
 | `fetch_url`                                    | Fetch a URL with SSRF protection (uses `safeFetch`).                                                              |
 | `ask_user`                                     | Ask the user a question in chat. Returns `asPendingToolCall: true`.                                               |
 | `browser_*`                                    | Browser tools (navigate, screenshot, click, type, extract_text, extract_html, evaluate, close) via headless Playwright. |
+| `schedule_task`                                | Schedule a one-shot or recurring task. Injects a message into a session when due.                                 |
+| `list_scheduled_tasks`                         | List all scheduled tasks.                                                                                         |
+| `cancel_scheduled_task`                        | Delete a scheduled task.                                                                                          |
+| `enable_scheduled_task` / `disable_scheduled_task` | Pause/resume a scheduled task without deleting it.                                                            |
 
 
 ### Dynamic Tool Execution
