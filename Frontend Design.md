@@ -298,6 +298,8 @@ User actions go through normal REST calls. These don't need a persistent connect
 | Respond to ask_user / render_and_wait | POST | `/sessions/:id/tool-response` |
 | Create a new session | POST | `/sessions` |
 | Continue after token limit | POST | `/sessions/:id/continue` |
+| Read a state value | GET | `/state/:key` |
+| Write a state value | POST | `/state/:key` |
 
 ### Client-side architecture
 

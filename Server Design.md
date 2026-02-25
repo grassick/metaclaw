@@ -201,6 +201,7 @@ On each session init and at compaction time, dynamically build the system prompt
 4. A summary of available tools (name + description for each enabled tool in `agent_tools`)
 5. A summary of available libraries (name + description from `agent_libraries`)
 6. A summary of available UI components (name + description from `agent_ui_components`)
+7. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
 
 This keeps the agent aware of its full capability set without loading all tool/library code into context.
 
@@ -231,6 +232,7 @@ Emitters:
 - Sub-sessions → `session:spawned`, `session:completed`
 - State store → `state:change`
 - Component/tool/library CRUD → `component:change`
+- Session creation/deletion → `sessions:list`
 - Scheduler → `session:status` (when a reminder/task fires)
 
 ## Key Design Decisions

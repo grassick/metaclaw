@@ -24,10 +24,11 @@ Each "step" runs this loop:
 
 | State                 | Meaning                                                             | What wakes it                                               |
 | --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `idle`                | Not processing, but can be woken. May have pending reminders.       | User message, reminder firing, sub-session completion       |
+| `idle`                | Not processing, but can be woken. May have pending reminders.       | User message, reminder firing                               |
 | `running`             | The LLM is being called or tools are executing.                     | (internal — loop is active)                                 |
-| `waiting_for_input`   | A pending tool call is waiting for the user.                        | User interacts with the rendered UI or answers the question |
+| `waiting_for_input`   | A pending tool call is waiting for the user or for sub-sessions.    | User interacts with the rendered UI, answers a question, or sub-sessions complete (`wait_for_sessions`) |
 | `completed`           | Finished. Terminal state — cannot be woken.                         | (nothing — session is done)                                 |
+| `error`               | The session crashed or timed out. Terminal state.                   | (nothing — session is done)                                 |
 | `token_limit_reached` | The session hit its token cap mid-step.                             | User clicks "Continue" in the UI to extend the limit        |
 
 
@@ -635,6 +636,25 @@ CRUD operations on reusable React components stored in `agent_ui_components`.
 ```
 
 **Returns:** `{ components: { name, description, version }[] }`
+
+### `read_ui_component`
+
+Returns the full definition including code and props schema.
+
+```json
+{
+  "name": "read_ui_component",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name, description, code, props_schema, version }`
 
 ---
 
@@ -1308,6 +1328,7 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `update_ui_component`    | UI components     | No     | Update a stored component                                               |
 | `delete_ui_component`    | UI components     | No     | Delete a stored component                                               |
 | `list_ui_components`     | UI components     | No     | List stored components                                                  |
+| `read_ui_component`      | UI components     | No     | Read a component's full definition including code                       |
 | `render_and_wait`        | UI rendering      | Yes    | Render a component and wait for interaction                             |
 | `render_blocks`          | UI rendering      | Yes    | Render structured blocks and wait for interaction                       |
 | `send_message`           | UI rendering      | No     | Send a chat message (no pause)                                          |
