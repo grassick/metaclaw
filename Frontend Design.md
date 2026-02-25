@@ -185,6 +185,8 @@ Sections:
 - **System prompt** — read-only view with an edit button (or let the agent handle edits?)
 - **Learned notes** — read-only view
 - **Tools** — list of agent-created tools with name, description, enabled/disabled toggle. Click to view code.
+- **Libraries** — list of agent-created libraries with name, description. Click to view code.
+- **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.
 - **Secrets** — manage API keys (add/edit/delete). Values are masked.
 - **Database** — basic stats (table count, total size). Maybe a simple query runner for debugging.
 - **History** — version history of system prompt changes with diff view and rollback

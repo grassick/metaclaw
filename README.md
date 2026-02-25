@@ -6,7 +6,7 @@ Single-user, self-hosted. Not a platform — just a thing that works for you and
 
 ## Key docs
 
-- [Rough Plan](./Rough%20Plan.md) — architecture, database schema, build phases
+- [Server Design](./Server%20Design.md) — architecture, database schema, agent implementation
 - [Built-in Tools](./Built-in%20Tools.md) — all meta-tools with JSON schemas
 - [Technology Choices](./Technology%20Choices.md) — stack decisions (SQLite, Vercel AI SDK, etc.)
 - [Sandbox Runtime](./Sandbox%20Runtime.md) — everything agent-authored code can touch

@@ -24,14 +24,14 @@ Each "step" runs this loop:
 
 | State                 | Meaning                                                             | What wakes it                                               |
 | --------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `idle`                | Not processing, but can be woken. May have pending scheduled tasks. | User message, scheduled task, sub-session completion        |
+| `idle`                | Not processing, but can be woken. May have pending reminders.       | User message, reminder firing, sub-session completion       |
 | `running`             | The LLM is being called or tools are executing.                     | (internal — loop is active)                                 |
 | `waiting_for_input`   | A pending tool call is waiting for the user.                        | User interacts with the rendered UI or answers the question |
 | `completed`           | Finished. Terminal state — cannot be woken.                         | (nothing — session is done)                                 |
 | `token_limit_reached` | The session hit its token cap mid-step.                             | User clicks "Continue" in the UI to extend the limit        |
 
 
-The agent goes `idle` naturally when the LLM produces a text response without tool calls. `idle` means "not doing anything right now, but could be woken later" — by a user message, a scheduled task, etc.
+The agent goes `idle` naturally when the LLM produces a text response without tool calls. `idle` means "not doing anything right now, but could be woken later" — by a user message, a reminder, etc. Scheduled tasks are a separate system-level concept — they create fresh sessions rather than waking existing ones.
 
 `completed` is a terminal state. For sub-sessions, this is set by calling `report_result` — the sub-session explicitly declares "I'm done, here are my results." For top-level sessions, `completed` can be set by the user archiving the conversation from the UI.
 
@@ -1020,26 +1020,71 @@ Close the current browser context and release resources.
 
 ---
 
-## Scheduling
+## Reminders
 
-The agent can schedule tasks to run later — either one-shot or recurring. The server polls the `agent_scheduled_tasks` table on an interval (~30s). When a task is due, it injects the task's `message` into the originating session and kicks off an agent step. The agent runs normally — produces messages, calls tools, etc. — and goes idle when done. The user sees the results next time they open the session.
+Session-level. The agent wants to continue *this* conversation after a delay — "I'll check back on this tomorrow." The reminder fires in the originating session, injecting a message that wakes the agent loop.
 
-Tasks always fire in the session that created them. Spawning new sessions is a separate concern (sub-agents, TBD).
-
-### `schedule_task`
+### `set_reminder`
 
 ```json
 {
-  "name": "schedule_task",
+  "name": "set_reminder",
   "parameters": {
     "type": "object",
     "properties": {
-      "name": { "type": "string", "description": "Human-readable label for the task" },
-      "message": { "type": "string", "description": "The message to inject into the session when the task fires. This is what the agent will see as its prompt." },
-      "at": { "type": "string", "description": "For one-shot tasks: ISO 8601 timestamp of when to fire (e.g. 2026-02-25T09:00:00Z)" },
-      "cron": { "type": "string", "description": "For recurring tasks: cron expression (e.g. '0 9 * * MON' for every Monday at 9am)" }
+      "at": { "type": "string", "description": "ISO 8601 timestamp of when to fire (e.g. 2026-02-25T09:00:00Z)" },
+      "message": { "type": "string", "description": "The message to inject into this session when the reminder fires" }
     },
-    "required": ["name", "message"]
+    "required": ["at", "message"]
+  }
+}
+```
+
+One-shot only. Fires in the current session. For recurring work, use a scheduled task instead.
+
+**Returns:** `{ id: string, at: string }`
+
+### `cancel_reminder`
+
+```json
+{
+  "name": "cancel_reminder",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "Reminder ID to cancel" }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+**Returns:** `{ deleted: boolean }`
+
+---
+
+## Scheduled Tasks
+
+System-level. Independent automated jobs — not tied to any session. Each firing creates a fresh session with the task's prompt. Managed from any session or from the settings UI.
+
+The server polls the `agent_scheduled_tasks` table on an interval (~30s). When a task is due, it creates a new session with the task's `task` field as the initial message, using the specified model and token limit. The agent runs in that fresh session with a clean context. If it needs memory across runs, it uses `agent_state` or the database.
+
+### `create_scheduled_task`
+
+```json
+{
+  "name": "create_scheduled_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Human-readable label" },
+      "task": { "type": "string", "description": "The task prompt. This becomes the initial user message in the fresh session each time the task fires." },
+      "at": { "type": "string", "description": "For one-shot tasks: ISO 8601 timestamp" },
+      "cron": { "type": "string", "description": "For recurring tasks: cron expression (e.g. '0 9 * * MON')" },
+      "model": { "type": "string", "description": "Model to use for each firing. Defaults to the system default. Use a cheaper model for simple recurring jobs." },
+      "token_limit": { "type": "number", "description": "Max tokens per firing. Defaults to the system-wide limit." }
+    },
+    "required": ["name", "task"]
   }
 }
 ```
@@ -1063,7 +1108,7 @@ Exactly one of `at` or `cron` must be provided.
 }
 ```
 
-**Returns:** `{ tasks: { id, name, message, type, next_run, last_run, enabled }[] }`
+**Returns:** `{ tasks: { id, name, task, type, next_run, last_run, enabled, model }[] }`
 
 ### `cancel_scheduled_task`
 
@@ -1276,11 +1321,13 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `browser_extract_html`   | Browser           | No     | Extract HTML from an element                                            |
 | `browser_evaluate`       | Browser           | No     | Run JS in page context                                                  |
 | `browser_close`          | Browser           | No     | Close the browser context                                               |
-| `schedule_task`          | Scheduling        | No     | Schedule a one-shot or recurring task                                   |
-| `list_scheduled_tasks`   | Scheduling        | No     | List all scheduled tasks                                                |
-| `cancel_scheduled_task`  | Scheduling        | No     | Delete a scheduled task                                                 |
-| `enable_scheduled_task`  | Scheduling        | No     | Resume a paused task                                                    |
-| `disable_scheduled_task` | Scheduling        | No     | Pause a task without deleting it                                        |
+| `set_reminder`           | Reminders         | No     | Wake this session later with a message (one-shot, session-scoped)       |
+| `cancel_reminder`        | Reminders         | No     | Cancel a pending reminder                                               |
+| `create_scheduled_task`  | Scheduled tasks   | No     | Create an automated job (one-shot or cron, creates fresh sessions)      |
+| `list_scheduled_tasks`   | Scheduled tasks   | No     | List all scheduled tasks (system-wide)                                  |
+| `cancel_scheduled_task`  | Scheduled tasks   | No     | Delete a scheduled task                                                 |
+| `enable_scheduled_task`  | Scheduled tasks   | No     | Resume a paused task                                                    |
+| `disable_scheduled_task` | Scheduled tasks   | No     | Pause a task without deleting it                                        |
 | `spawn_session`          | Sub-sessions      | No     | Spawn a sub-session with a task                                         |
 | `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
 | `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
