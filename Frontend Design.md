@@ -236,6 +236,141 @@ When the agent calls `render_blocks`, where do the blocks appear?
 
 ---
 
+## Real-Time Sync (SSE + REST)
+
+The frontend needs live updates from multiple concurrent sessions, sub-sessions, state changes, and component changes. The approach: **SSE for server→client push, REST for client→server actions.**
+
+### Why SSE over WebSocket
+
+- `EventSource` handles reconnection automatically — no heartbeat/ping-pong logic
+- Client→server traffic is infrequent (send message, answer question, submit form) — a regular POST is fine
+- Single SSE connection per browser tab, not per session. Events are tagged with `session_id`.
+- Simpler server implementation — just write to a response stream
+
+### SSE connection
+
+The client opens one connection to `GET /events`. The server pushes events as they happen across all sessions:
+
+```
+event: session:status
+data: {"id":"sess_123","status":"running"}
+
+event: session:stream
+data: {"id":"sess_123","delta":"Here's what I"}
+
+event: session:message
+data: {"id":"sess_123","message":{"role":"assistant","content":"Here's what I found."}}
+
+event: session:tool_call
+data: {"id":"sess_123","tool_call_id":"tc_456","name":"fetch_url","status":"running"}
+
+event: session:tool_call
+data: {"id":"sess_123","tool_call_id":"tc_456","name":"fetch_url","status":"complete"}
+
+event: session:pending_input
+data: {"id":"sess_123","tool_call_id":"tc_789","name":"ask_user","args":{"question":"Which format?","options":["CSV","JSON"]}}
+
+event: session:spawned
+data: {"id":"sub_abc","parent_id":"sess_123","task":"Research topic A","status":"running"}
+
+event: session:completed
+data: {"id":"sub_abc","parent_id":"sess_123"}
+
+event: state:change
+data: {"key":"counter","value":42}
+
+event: component:change
+data: {"name":"Dashboard","action":"updated"}
+
+event: sessions:list
+data: {"action":"created","id":"sess_new"}
+```
+
+### REST endpoints (client→server)
+
+User actions go through normal REST calls. These don't need a persistent connection.
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| Send a message | POST | `/sessions/:id/message` |
+| Respond to ask_user / render_and_wait | POST | `/sessions/:id/tool-response` |
+| Create a new session | POST | `/sessions` |
+| Continue after token limit | POST | `/sessions/:id/continue` |
+
+### Client-side architecture
+
+One SSE connection feeds multiple stores. Each store subscribes to the event types it cares about.
+
+```
+SSE Connection (GET /events)
+  │
+  ├─ SessionListStore
+  │    ← session:status, sessions:list, session:spawned, session:completed
+  │    Updates sidebar: status badges, sub-session nesting, new sessions
+  │
+  ├─ ActiveSessionStore
+  │    ← session:stream, session:message, session:tool_call, session:pending_input
+  │    Updates the chat panel and canvas for the currently viewed session
+  │    Filters by the active session ID
+  │
+  ├─ StateStore
+  │    ← state:change
+  │    Feeds useAgentState hooks in rendered components
+  │
+  └─ ComponentStore
+       ← component:change
+       Updates page tabs when components are created/updated/deleted
+```
+
+### How `useAgentState` stays live
+
+1. On mount, the hook fetches the current value via `GET /state/:key`
+2. It subscribes to `state:change` events for its key via the StateStore
+3. When a change arrives (from any session, sub-session, or sandbox code), the hook updates automatically
+4. Writes go through `POST /state/:key` — the server emits a `state:change` event, which updates all other subscribers
+
+No polling.
+
+### How streaming works
+
+When the LLM is producing tokens for a session:
+
+1. Server emits `session:stream` events with token deltas
+2. The ActiveSessionStore appends deltas to a buffer, re-rendering the chat in real time
+3. When the LLM finishes, server emits `session:message` with the complete message — the client replaces the streaming buffer with the final version
+
+If the user switches to a different session mid-stream, the stream events still flow (they're session-tagged), but the ActiveSessionStore ignores events for non-active sessions. Switching back shows the accumulated messages.
+
+### How sub-sessions appear
+
+When a session spawns a sub-session:
+
+1. Server emits `session:spawned` — the sidebar shows the sub-session nested under its parent
+2. Sub-session status updates flow via `session:status` — the sidebar shows running/waiting/completed
+3. If a sub-session is `waiting_for_input`, the sidebar shows an indicator. The user clicks into it, sees the question, and responds.
+4. When the sub-session calls `report_result`, server emits `session:completed` — the parent session resumes (its `wait_for_sessions` resolves), and the sidebar updates.
+
+### Server-side implementation
+
+The server maintains a set of active SSE connections (one per browser tab). Internal components emit events via an in-process `EventEmitter`:
+
+```
+Agent Loop    → "session:message", "session:status", "session:stream"
+Meta-tools    → "session:tool_call", "session:pending_input"
+State Store   → "state:change"
+Component DB  → "component:change"
+Scheduler     → "session:status" (when a task fires and a session starts running)
+Sub-sessions  → "session:spawned", "session:completed"
+        ↓
+   EventEmitter
+        ↓
+   SSE Handler → writes to all connected response streams
+```
+
+No external message broker needed. It's all in-process because it's a single Node.js server for a single user.
+
+---
+
 ## Responsive / Mobile
 
 Not a priority for v1, but some ground rules:
@@ -276,7 +411,7 @@ Plus the communication hooks:
 
 | Hook/Function | Description |
 |---------------|-------------|
-| `useAgentState(key)` | `[value, setValue]` — reads/writes `agent_state` directly via REST. No LLM. |
+| `useAgentState(key)` | `[value, setValue]` — reads `agent_state` via REST on mount, stays live via SSE `state:change` events. Writes via REST. No LLM. |
 | `callTool(action, payload)` | Sends a `toolResponse` to the pending `render_and_wait` call. Resumes the LLM. |
 | `sendMessage(text)` | Sends a `userMessage`. Equivalent to typing in the chat box. |
 | `importModule(pkg)` | Dynamic CDN import via esm.sh. Returns the module. Cached. |

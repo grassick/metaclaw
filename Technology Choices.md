@@ -59,6 +59,7 @@ Both are merged into a single `tools` object passed to `generateText()` / `strea
 | JSX compilation | **Sucrase** | Compiles agent-authored JSX/TS at runtime in the browser. Fast, no full Babel needed. |
 | Pre-bundled UI libs | Recharts, react-leaflet, react-markdown, lucide-react, date-fns | Covers charts, maps, markdown, icons, dates. Available as injected deps. |
 | Dynamic imports | **esm.sh** CDN | Escape hatch for libraries not in the pre-bundled set. `importModule('pkg')` wraps `import('https://esm.sh/pkg?external=react,react-dom')` with caching. |
+| Real-time | **SSE** (Server-Sent Events) | Single connection per browser tab. Server pushes session updates, streaming tokens, state changes. Client→server uses REST. |
 
 ## What's NOT used
 
@@ -68,3 +69,4 @@ Both are merged into a single `tools` object passed to `generateText()` / `strea
 | Docker (for dev) | Unnecessary without Postgres. Just `pnpm install && pnpm dev`. |
 | ORM | better-sqlite3's synchronous API is simple enough. Raw SQL with a thin helper layer. |
 | iframe sandbox for UI | Personal-use app — agent components run in the React tree directly. Error boundaries are the only safety net. |
+| WebSocket | SSE is simpler (auto-reconnect, no ping/pong), and client→server traffic is infrequent enough for REST. |
