@@ -167,9 +167,14 @@ This encourages continuous notepad use, making the pre-compaction warning a safe
 
 ---
 
-## Sub-sessions
+## Sub-sessions and forks
 
-Each sub-session has its own notepad — it's per-session, and sub-sessions are sessions. A sub-session working on a delegated task uses its own notepad for its own working memory.
+Each sub-session has its own notepad. How it's initialized depends on how the sub-session was created:
+
+- **`spawn_session`** — notepad starts empty (unless `copy_notepad: true`, in which case the parent's notepad is copied).
+- **`fork_session`** — notepad is always copied from the parent (along with the full conversation history).
+
+After creation, parent and child notepads are independent. Changes to one don't affect the other.
 
 When a sub-session calls `report_result`, it sends a clean summary back to the parent. The notepad is internal working state, not part of the result. The parent's notepad might track delegated work:
 

@@ -59,12 +59,13 @@ All types are SQLite-native. JSON is stored as `text` and parsed in application 
 
 ### `agent_sessions` (from copied code, extended)
 
-Stores conversation history, status, pending tool calls. Extended with sub-session and token limit support.
+Stores conversation history, status, pending tool calls. Extended with sub-session, forking, and token limit support.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `parent_session_id` | text | FK to parent session (null for top-level sessions) |
 | `parent_tool_call_id` | text | The `wait_for_sessions` tool call ID this sub-session reports to |
+| `forked_from_session_id` | text | If this session was created via `fork_session`, the session it was forked from (null for spawned/top-level sessions) |
 | `model` | text | Model used for this session (may differ from parent for cheaper sub-sessions) |
 | `token_limit` | integer | Max tokens before the session is stopped (null = system default) |
 | `token_usage` | integer | Tokens consumed so far |

@@ -1188,15 +1188,20 @@ Pause or resume a task without deleting it.
 
 ## Sub-Sessions
 
-A session can spawn sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism or a cheaper model. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
+A session can spawn or fork sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism, a cheaper model, or isolated exploration. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
 
-Sub-sessions have full access to all shared resources (tools, libraries, state, database, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
+Sub-sessions have full access to all shared resources (tools, libraries, skills, state, database, files, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
 
-Sub-sessions can spawn their own sub-sessions (max depth: 3). They can modify shared state (last-write-wins, same as parallel sessions).
+Sub-sessions can spawn/fork their own sub-sessions (max depth: 3). They can modify shared state (last-write-wins, same as parallel sessions).
+
+Two ways to create a sub-session:
+
+- **`spawn_session`** — fresh start. The sub-session gets only the task prompt as its initial message. Cheap, good for independent tasks.
+- **`fork_session`** — full context copy. The sub-session gets a copy of the parent's conversation history and notepad, plus the task appended. Expensive, good when the sub-task needs everything the parent knows.
 
 ### `spawn_session`
 
-Create and start a sub-session. Returns immediately — the sub-session runs independently.
+Create and start a fresh sub-session. Returns immediately — the sub-session runs independently.
 
 ```json
 {
@@ -1206,16 +1211,52 @@ Create and start a sub-session. Returns immediately — the sub-session runs ind
     "properties": {
       "task": { "type": "string", "description": "The instruction or message for the sub-session. This is what the sub-agent sees as its initial user message." },
       "model": { "type": "string", "description": "Model to use for the sub-session. Defaults to the current session's model. Use a cheaper/faster model for simple tasks." },
-      "token_limit": { "type": "number", "description": "Max tokens the sub-session can consume before being stopped. Defaults to the system-wide per-session limit." }
+      "token_limit": { "type": "number", "description": "Max tokens the sub-session can consume before being stopped. Defaults to the system-wide per-session limit." },
+      "copy_notepad": { "type": "boolean", "description": "Copy the parent's current notepad into the new session. Useful when the notepad contains working state the sub-session needs. Default: false." }
     },
     "required": ["task"]
   }
 }
 ```
 
-The sub-session inherits the current system prompt and learned notes. All tools, libraries, state, and database access are available.
+The sub-session inherits the current system prompt. All tools, libraries, skills, state, and database access are available. The conversation starts fresh with just the task prompt (plus optionally the parent's notepad).
 
 **Returns:** `{ id: string }` — the sub-session ID.
+
+### `fork_session`
+
+Create a sub-session that is a copy of the current session. The fork inherits the parent's conversation history (post-compaction, i.e. what the parent currently sees) and notepad. The task is appended as a new user message to the copied history.
+
+This is for sub-tasks that require the full context of what the parent has been doing — the fork already knows everything the parent knows, so the task instruction can be concise ("now do X with what we've found").
+
+```json
+{
+  "name": "fork_session",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "task": { "type": "string", "description": "Instruction for the fork. Appended as a new user message to the copied conversation history." },
+      "model": { "type": "string", "description": "Model to use. Defaults to the current session's model." },
+      "token_limit": { "type": "number", "description": "Max tokens the fork can consume." }
+    },
+    "required": ["task"]
+  }
+}
+```
+
+After the fork point, parent and child diverge completely. Changes to one session's notepad, conversation, or any tool calls do not affect the other. Global resources (state, database, files) are shared as always — last-write-wins.
+
+The fork copies the parent's **current working history** — meaning post-compaction if compaction has happened. This keeps the fork's starting token count reasonable even for long-running parent sessions.
+
+**Returns:** `{ id: string }` — the forked session ID.
+
+### When to use which
+
+| Approach | Context cost | Context quality | Use when |
+|----------|-------------|-----------------|----------|
+| `spawn_session` | Low | Task prompt only | Independent tasks, research, parallel work that doesn't need parent context |
+| `spawn_session` + `copy_notepad` | Low–medium | Task prompt + notepad | Tasks that need working state (plan, findings) but not the full conversation |
+| `fork_session` | High (full history) | Complete — everything the parent knows | Tasks that need the full reasoning chain, what-if exploration, decision-point branching |
 
 ### `wait_for_sessions`
 
@@ -1353,7 +1394,8 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `cancel_scheduled_task`  | Scheduled tasks   | No     | Delete a scheduled task                                                 |
 | `enable_scheduled_task`  | Scheduled tasks   | No     | Resume a paused task                                                    |
 | `disable_scheduled_task` | Scheduled tasks   | No     | Pause a task without deleting it                                        |
-| `spawn_session`          | Sub-sessions      | No     | Spawn a sub-session with a task                                         |
+| `spawn_session`          | Sub-sessions      | No     | Spawn a fresh sub-session with a task                                   |
+| `fork_session`           | Sub-sessions      | No     | Fork current session (copies history + notepad) with a task             |
 | `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
 | `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
 | `web_search`             | Web               | No     | Search the web (see [Web](./Web.md))                                    |
