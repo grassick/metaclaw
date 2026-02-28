@@ -68,6 +68,7 @@ Stores conversation history, status, pending tool calls. Extended with sub-sessi
 | `model` | text | Model used for this session (may differ from parent for cheaper sub-sessions) |
 | `token_limit` | integer | Max tokens before the session is stopped (null = system default) |
 | `token_usage` | integer | Tokens consumed so far |
+| `notepad` | text | Session-scoped freeform markdown scratchpad (see [Session Notepad](./Session%20Notepad.md)) |
 
 ### `agent_config`
 
@@ -175,6 +176,39 @@ System-level automated jobs. Not tied to any session. Each firing creates a fres
 | `last_run` | text | When it last fired (null if never) |
 | `created_on` | text | ISO 8601 |
 
+### `agent_skills`
+
+Named markdown documents the agent can reference. See [Skills](./Skills.md).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_id` | text | Unique slug (e.g. `quarterly-excel-reports`) |
+| `title` | text | Human-readable title |
+| `description` | text | Brief description (shown in system prompt summary for discovery) |
+| `content` | text | Full markdown content |
+| `tags` | text | JSON array of tags for categorization |
+| `source` | text | `user` or `agent` |
+| `version` | integer | Auto-incremented on update |
+| `enabled` | integer | 1/0 |
+| `created_on` | text | ISO 8601 |
+| `modified_on` | text | ISO 8601 |
+
+### `agent_files`
+
+File workspace metadata. Actual file data lives on disk in `files/`. See [Files](./Files.md).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_id` | text | UUID |
+| `name` | text | Filename |
+| `mime_type` | text | Detected MIME type (via magic bytes) |
+| `size` | integer | Size in bytes |
+| `disk_path` | text | Path within `files/` directory |
+| `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
+| `source_session_id` | text | Which session uploaded or created the file |
+| `created_on` | text | ISO 8601 |
+| `modified_on` | text | ISO 8601 |
+
 ### `agent_config_history`
 
 Audit log for prompt/notes changes (for rollback).
@@ -202,6 +236,8 @@ On each session init and at compaction time, dynamically build the system prompt
 5. A summary of available libraries (name + description from `agent_libraries`)
 6. A summary of available UI components (name + description from `agent_ui_components`)
 7. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
+8. A summary of available skills (name + title + description + tags from `agent_skills` — see [Skills](./Skills.md))
+9. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
 
 This keeps the agent aware of its full capability set without loading all tool/library code into context.
 
@@ -231,7 +267,8 @@ Emitters:
 - Agent loop → `session:message`, `session:status`, `session:stream`, `session:tool_call`, `session:pending_input`
 - Sub-sessions → `session:spawned`, `session:completed`
 - State store → `state:change`
-- Component/tool/library CRUD → `component:change`
+- Component/tool/library/skill CRUD → `component:change`
+- File operations → `file:created`, `file:modified`, `file:deleted` (see [Files](./Files.md))
 - Session creation/deletion → `sessions:list`
 - Scheduler → `session:status` (when a reminder/task fires)
 
@@ -242,4 +279,7 @@ Emitters:
 - **System prompt is split**: core prompt + learned notes. The agent should prefer appending notes over rewriting the core prompt.
 - **Libraries enable code reuse**: tools are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
 - **Reminders vs scheduled tasks**: reminders are session-scoped and one-shot (wake an existing session). Scheduled tasks are system-level (create fresh sessions each firing). See [Built-in Tools](./Built-in%20Tools.md#reminders) for details.
+- **Files on disk, metadata in SQLite**: files are stored in `files/` on disk (can be 10–50 MB) with metadata in `agent_files`. Format-specific operations (spreadsheet, PDF, image) run server-side via ExcelJS, pdf-lib, sharp — the sandbox gets proxy stubs. See [Files](./Files.md).
+- **Skills replace monolithic learned notes**: discrete markdown documents with name + description for selective loading, instead of one growing blob. See [Skills](./Skills.md).
+- **Session notepad survives compaction**: per-session freeform scratchpad stored on the session row, included in the system prompt every turn. Pre-compaction warning gives the agent a chance to save working state. See [Session Notepad](./Session%20Notepad.md).
 - **No iframe sandbox for UI**: personal-use app — agent components run directly in the React tree. Error boundaries are the only safety net.

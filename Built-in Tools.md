@@ -1352,5 +1352,28 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `spawn_session`          | Sub-sessions      | No     | Spawn a sub-session with a task                                         |
 | `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
 | `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
+| `web_search`             | Web               | No     | Search the web (see [Web](./Web.md))                                    |
+| `web_read`               | Web               | No     | Extract clean readable content from a URL (see [Web](./Web.md))         |
+| `file_list`              | Files             | No     | List files in the workspace (see [Files](./Files.md))                   |
+| `file_info`              | Files             | No     | Get file metadata                                                       |
+| `file_create`            | Files             | No     | Create a new file                                                       |
+| `file_delete`            | Files             | No     | Delete a file                                                           |
+| `file_read_text`         | Files             | No     | Read text file content (full or line range)                             |
+| `file_write_text`        | Files             | No     | Write text file content                                                 |
+| `file_replace_lines`     | Files             | No     | Replace a range of lines in a text file                                 |
+| `file_download`          | Files             | No     | Download a URL into the file workspace                                  |
+| `spreadsheet_*`          | Files             | No     | Spreadsheet operations (see [Files](./Files.md))                        |
+| `pdf_*`                  | Files             | No     | PDF operations (see [Files](./Files.md))                                |
+| `image_*`                | Files             | No     | Image operations (see [Files](./Files.md))                              |
+| `create_skill`           | Skills            | No     | Create a named knowledge document (see [Skills](./Skills.md))           |
+| `update_skill`           | Skills            | No     | Edit a skill's content or metadata                                      |
+| `delete_skill`           | Skills            | No     | Delete a skill                                                          |
+| `list_skills`            | Skills            | No     | List all skills (name + description + tags)                             |
+| `read_skill`             | Skills            | No     | Read a skill's full content                                             |
+| `enable_skill`           | Skills            | No     | Enable a disabled skill                                                 |
+| `disable_skill`          | Skills            | No     | Disable a skill without deleting it                                     |
+| `read_notepad`           | Session notepad   | No     | Read the session notepad (see [Session Notepad](./Session%20Notepad.md))|
+| `write_notepad`          | Session notepad   | No     | Replace the entire notepad content                                      |
+| `update_notepad`         | Session notepad   | No     | Surgical edit (find_replace, append, prepend, delete)                   |
 
 

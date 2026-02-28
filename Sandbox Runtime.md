@@ -19,6 +19,10 @@ console.error(...args: any[]): void
 // Network
 fetch(url: string, options?: FetchOptions): Promise<FetchResponse>
 
+// Web search & reading (see Web.md)
+web.search(query: string, options?: SearchOptions): Promise<SearchResults>
+web.read(url: string, options?: ReadOptions): Promise<PageContent>
+
 // Key-value state
 state.get(key: string): Promise<any | null>
 state.set(key: string, value: any): Promise<void>
@@ -28,6 +32,37 @@ state.keys(prefix?: string): Promise<string[]>
 // Database (agent's own SQLite DB)
 db.sql(sql: string, params?: any[]): Promise<QueryResult | WriteResult>
 db.schema(): Promise<SchemaResult>
+
+// Files (see Files.md)
+files.list(pattern?: string): Promise<FileInfo[]>
+files.info(id: string): Promise<FileInfo>
+files.create(name: string, mime?: string): Promise<{ id: string, name: string }>
+files.delete(id: string): Promise<void>
+files.copy(id: string, newName: string): Promise<{ id: string, name: string }>
+files.rename(id: string, newName: string): Promise<void>
+files.download(url: string, filename?: string): Promise<FileInfo>
+files.readText(id: string, options?: { startLine?: number, endLine?: number }): Promise<{ content: string, totalLines: number }>
+files.writeText(id: string, content: string): Promise<void>
+files.replaceLines(id: string, startLine: number, endLine: number, newContent: string): Promise<void>
+files.insertLines(id: string, afterLine: number, content: string): Promise<void>
+files.searchText(id: string, pattern: string): Promise<{ matches: { line: number, content: string }[] }>
+files.lineCount(id: string): Promise<number>
+files.readBytes(id: string, offset: number, length: number): Promise<string>  // base64
+files.writeBytes(id: string, offset: number, base64data: string): Promise<void>
+files.appendBytes(id: string, base64data: string): Promise<void>
+// Format-specific (see Files.md for full details)
+files.spreadsheet.*  // ExcelJS-backed spreadsheet operations
+files.pdf.*          // pdf-lib + pdfjs-dist PDF operations
+files.image.*        // sharp-backed image operations
+
+// Skills (read-only in sandbox — see Skills.md)
+skills.list(tag?: string): Promise<{ name: string, title: string, description: string, tags: string[] }[]>
+skills.read(name: string): Promise<{ name: string, title: string, description: string, content: string, tags: string[] }>
+
+// Session notepad (see Session Notepad.md)
+session.notepad.read(): Promise<string>
+session.notepad.write(content: string): Promise<void>
+session.notepad.append(text: string): Promise<void>
 
 // Libraries (agent-created shared code)
 require(name: string): any
@@ -195,6 +230,55 @@ Read-only object containing stored secrets (API keys, tokens). Keys are set by t
 // Example usage
 const apiKey = secrets.OPENWEATHER_API_KEY
 const resp = await fetch(`https://api.openweathermap.org/data/2.5/weather?appid=${apiKey}&q=London`)
+```
+
+### `web`
+
+Lightweight web search and page reading. Sits between raw `fetch` (noisy HTML) and full `browser.*` automation (heavy Playwright). See [Web](./Web.md) for full details.
+
+```typescript
+web.search(query: string, options?: {
+  count?: number       // max results, default 10
+  region?: string      // country code
+  freshness?: 'day' | 'week' | 'month'
+}): Promise<{
+  results: { title: string, url: string, snippet: string, published_date?: string }[]
+}>
+
+web.read(url: string, options?: {
+  format?: 'markdown' | 'text' | 'html'  // default 'markdown'
+  maxLength?: number
+}): Promise<{
+  title: string, byline: string | null, content: string,
+  url: string, word_count: number, truncated: boolean
+}>
+```
+
+### `files`
+
+File management, text access, and format-specific APIs. All operations run on the server — the sandbox gets proxy stubs. See [Files](./Files.md) for the full API reference.
+
+Generic and text operations are on `files.*` directly. Format-specific APIs are sub-namespaces: `files.spreadsheet.*`, `files.pdf.*`, `files.image.*`.
+
+### `skills`
+
+Read-only access to agent skills. See [Skills](./Skills.md).
+
+```typescript
+skills.list(tag?: string): Promise<{ name, title, description, tags }[]>
+skills.read(name: string): Promise<{ name, title, description, content, tags }>
+```
+
+Skills are created and edited via meta-tools (`create_skill`, `update_skill`), not from sandbox code. Sandbox access is read-only so agent-authored tools can reference skill content without side effects.
+
+### `session`
+
+Session-scoped notepad for working notes and task tracking. See [Session Notepad](./Session%20Notepad.md).
+
+```typescript
+session.notepad.read(): Promise<string>
+session.notepad.write(content: string): Promise<void>
+session.notepad.append(text: string): Promise<void>
 ```
 
 ### Utilities
