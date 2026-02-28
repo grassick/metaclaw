@@ -64,6 +64,9 @@ session.notepad.read(): Promise<string>
 session.notepad.write(content: string): Promise<void>
 session.notepad.append(text: string): Promise<void>
 
+// LLM (single-call generation, no agent loop)
+llm.generate(prompt: string, options?: LlmOptions): Promise<LlmResult>
+
 // Libraries (agent-created shared code)
 require(name: string): any
 
@@ -281,6 +284,53 @@ session.notepad.write(content: string): Promise<void>
 session.notepad.append(text: string): Promise<void>
 ```
 
+### `llm`
+
+Make a single LLM call from within sandbox code. Useful for classification, extraction, summarization, translation, and batch processing. This is a function call, not an agent loop — no tool access, no conversation history, just prompt in, text out.
+
+```typescript
+llm.generate(prompt: string, options?: {
+  system?: string          // system prompt for the call
+  intelligence?: 'low' | 'medium' | 'high'  // model capability, default 'low'
+  schema?: object          // JSON Schema for structured output
+  maxTokens?: number       // max output tokens, default 4096
+  temperature?: number     // 0-1, default 0
+  images?: string[]        // file IDs for vision/multimodal input
+}): Promise<{
+  text: string             // generated text (or JSON string if schema provided)
+  parsed?: any             // parsed JSON object (present when schema was provided)
+  usage: { input_tokens: number, output_tokens: number }
+}>
+```
+
+The `intelligence` parameter maps to user-configured models (e.g. `low` → Haiku, `medium` → Sonnet, `high` → Opus). Default is `low` — sandbox LLM calls should be cheap unless there's a reason to spend more.
+
+The `schema` parameter constrains the LLM to return valid JSON matching the schema (via the Vercel AI SDK's `generateObject`). When provided, `parsed` in the result contains the already-parsed object.
+
+The `images` parameter accepts file IDs from the file workspace. The server loads the images and includes them as vision inputs in the LLM call.
+
+**Example: batch classification inside a tool**
+
+```javascript
+const rows = await db.sql('SELECT id, description FROM products WHERE category IS NULL')
+for (const [id, description] of rows.rows) {
+  const { parsed } = await llm.generate(
+    `Classify this product: ${description}`,
+    {
+      schema: {
+        type: 'object',
+        properties: {
+          category: { type: 'string', enum: ['Electronics', 'Clothing', 'Food', 'Other'] },
+          confidence: { type: 'number' }
+        },
+        required: ['category', 'confidence']
+      }
+    }
+  )
+  await db.sql('UPDATE products SET category = ? WHERE id = ?', [parsed.category, id])
+}
+```
+
 ### Utilities
 
 | Function | Description |
@@ -312,4 +362,6 @@ session.notepad.append(text: string): Promise<void>
 | `db.sql` query timeout | 5 seconds |
 | `db.sql` max rows returned | 1000 |
 | `fetch` timeout | 30 seconds |
+| `llm.generate` max calls per execution | 50 |
+| `llm.generate` timeout per call | 30 seconds |
 | `setTimeout` max delay | 30 seconds |

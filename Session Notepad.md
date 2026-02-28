@@ -210,7 +210,7 @@ The agent manages the structure. It might use markdown checklists for progress, 
 ## What the notepad is NOT
 
 - **Not global.** It's session-scoped. Each session has its own. Use `agent_state` or skills for cross-session knowledge.
-- **Not a replacement for learned notes.** Learned notes hold permanent facts. The notepad holds working state for the current task.
+- **Not a replacement for the system prompt.** The system prompt holds permanent behavioral instructions and observations. The notepad holds working state for the current task.
 - **Not a replacement for skills.** After completing a task, the agent might extract reusable knowledge from the notepad into a skill. The notepad is ephemeral working memory; skills are permanent knowledge.
 - **Not automatically populated.** The agent decides what to write. The system doesn't extract or summarize on the agent's behalf (except the pre-compaction warning, which prompts the agent to do it).
 
@@ -221,7 +221,6 @@ The agent manages the structure. It might use markdown checklists for progress, 
 | Layer | Scope | In context | Survives compaction | Survives session end |
 |---|---|---|---|---|
 | System prompt | Global | Always (full text) | N/A | Yes (permanent) |
-| Learned notes | Global | Always (full text) | N/A | Yes (permanent) |
 | Skills | Global | Summary always; full text on demand | N/A | Yes (permanent) |
 | **Session notepad** | Session | Always (full text) | Yes | Archived with session |
 | Conversation history | Session | Yes (compacted over time) | Partially (summarized) | Archived with session |

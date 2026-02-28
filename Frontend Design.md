@@ -195,8 +195,7 @@ The agent can create persistent UI components (via `create_ui_component`) that a
 Accessed via the gear icon. Could be a slide-over drawer or a separate page.
 
 Sections:
-- **System prompt** — read-only view with an edit button (or let the agent handle edits?)
-- **Learned notes** — read-only view
+- **System prompt** — read-only view with an edit button. Shows the full prompt including agent-appended observations. (Or let the agent handle edits?)
 - **Tools** — list of agent-created tools with name, description, enabled/disabled toggle. Click to view code.
 - **Libraries** — list of agent-created libraries with name, description. Click to view code.
 - **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.

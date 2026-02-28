@@ -36,16 +36,16 @@ Standards and procedures for building quarterly financial reports.
 
 ## How skills differ from other concepts
 
-| | Skills | Learned Notes | Tools | Libraries | Files |
+| | Skills | System Prompt | Tools | Libraries | Files |
 |---|---|---|---|---|---|
-| **Content** | Markdown knowledge and instructions | Unstructured text observations | Executable JavaScript | Executable JavaScript | Any format (binary or text) |
-| **Purpose** | Inform how the agent works | Quick facts and preferences | Add programmatic capabilities | Share code between tools | Work artifacts |
-| **Created by** | User or agent | Agent only | Agent only | Agent only | User or agent |
+| **Content** | Markdown knowledge and instructions | Behavioral instructions + observations | Executable JavaScript | Executable JavaScript | Any format (binary or text) |
+| **Purpose** | Inform how the agent works (procedures, standards) | Core identity + quick facts | Add programmatic capabilities | Share code between tools | Work artifacts |
+| **Created by** | User or agent | User (core) + agent (observations) | Agent only | Agent only | User or agent |
 | **Loaded into** | LLM context as text (via tool call) | LLM context (always, in full) | Executed in sandbox | Required by tool code | Accessed via file APIs |
 | **Retrieval** | Agent reads list, loads by name when relevant | Always present | Called by name | Required by name | Accessed by ID |
-| **Lifecycle** | Long-lived, refined over time | Long-lived, append-only | Persistent until deleted | Persistent until deleted | Task-scoped or persistent |
+| **Lifecycle** | Long-lived, refined over time | Long-lived, core rarely changes, observations appended | Persistent until deleted | Persistent until deleted | Task-scoped or persistent |
 
-The key difference: a skill's content goes **into the LLM's context as text** when loaded. The agent reads it and follows the instructions. A tool **executes code**. A file is **processed by APIs**. Skills are the only thing here that directly shape behavior by becoming part of the prompt.
+The key difference: a skill's content goes **into the LLM's context as text** when loaded. The agent reads it and follows the instructions. A tool **executes code**. A file is **processed by APIs**. The system prompt is always present but should stay concise — skills are for anything too detailed or specialized to justify the per-turn token cost of being always in context.
 
 ---
 
@@ -266,16 +266,18 @@ The system prompt should encourage this: "After completing a complex or multi-st
 
 ---
 
-## Relationship to learned notes
+## Relationship to the system prompt
 
-Learned notes doesn't go away, but its role narrows. It becomes the place for small, unstructured facts:
+The system prompt holds the agent's core identity and small behavioral observations (appended via `edit_system_prompt` with the `append` operation):
 
 - "User's name is Alex"
 - "Timezone: US Eastern"
 - "Prefers concise responses"
 - "Company fiscal year starts in April"
 
-Anything that's a procedure, workflow, standard, or domain knowledge block becomes a skill. Over time, the agent's growing competence is expressed as an expanding skill library rather than an ever-growing notes blob.
+These are always in context — a few tokens each, relevant to nearly every conversation.
+
+Anything that's a **procedure, workflow, standard, or domain knowledge block** becomes a skill instead. Skills are loaded on demand, so they don't consume tokens in conversations where they're irrelevant. The dividing line: if it's a quick fact that shapes general behavior, append it to the system prompt. If it's detailed instructions for a specific kind of task, create a skill.
 
 ---
 
