@@ -9,6 +9,11 @@
 | Database | **SQLite via better-sqlite3** | Single-file, zero-config, synchronous API. Sufficient for single-user. Use in-process EventEmitter for change notifications instead of Postgres LISTEN/NOTIFY. |
 | Sandbox | **isolated-vm** | V8 isolate for running agent-created tool code. Already proven in the monorepo. |
 | Browser | **Playwright** (headless Chromium) | Server-side only. Browser context per conversation. |
+| File handling | **multer** (uploads), **file-type** (MIME detection) | Express multipart middleware + magic-byte detection |
+| Spreadsheets | **ExcelJS** | Read/write .xlsx with formatting, formulas, streaming |
+| PDFs | **pdf-lib** (edit) + **pdfjs-dist** (extract) | Creation/modification and text extraction are separate concerns |
+| Images | **sharp** | Fast resize/crop/convert via libvips |
+| Web reading | **@mozilla/readability** + **linkedom** + **turndown** | Fetch → DOM parse → content extract → markdown conversion |
 | Package manager | **pnpm** | Workspaces for server + client |
 
 ## LLM Integration

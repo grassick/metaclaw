@@ -52,14 +52,9 @@ Every session has a token cap — the maximum tokens (input + output) it can con
 
 ## Self-Modification
 
-The agent's identity is stored as two separate text documents:
+The agent's identity is stored as a single **system prompt** document — behavioral instructions, preferences, and accumulated observations all live here. The prompt typically has a core section (written at setup) and an agent-managed section where the agent appends things it learns ("user prefers dark mode", "timezone is EST"). For structured knowledge — procedures, standards, domain knowledge — the agent creates skills instead (see [Skills](./Skills.md)).
 
-- **System prompt** — behavioral instructions ("you are...", "when the user asks X, do Y")
-- **Learned notes** — accumulated knowledge ("the user prefers dark mode", "their timezone is EST")
-
-Both are concatenated into the LLM's system message at conversation start and at compaction. Keeping them separate means the agent can rewrite its instructions without accidentally destroying accumulated knowledge, and vice versa.
-
-> **Note:** The system prompt is in the LLM's context, but after mid-conversation edits the context still holds the old version until compaction. Use the read tools to get the current stored version before making surgical edits.
+> **Note:** The system prompt is in the LLM's context, but after mid-conversation edits the context still holds the old version until compaction. Use `read_system_prompt` to get the current stored version before making surgical edits.
 
 Every edit saves the previous version to `agent_config_history` for rollback.
 
@@ -124,60 +119,6 @@ Supports multiple edit operations so the agent doesn't have to replace the entir
 | `prepend`      | `content`         | Add text to the beginning of the prompt                                                                                        |
 | `delete`       | `content`         | Remove first occurrence of `content`. Fails if not found.                                                                      |
 
-
-**Returns:** `{ version: number }`
-
-### `read_learned_notes`
-
-```json
-{
-  "name": "read_learned_notes",
-  "parameters": {
-    "type": "object",
-    "properties": {},
-    "required": []
-  }
-}
-```
-
-**Returns:** `{ notes: string, version: number }`
-
-### `edit_learned_notes`
-
-Same editing operations as `edit_system_prompt`.
-
-```json
-{
-  "name": "edit_learned_notes",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "operation": {
-        "type": "string",
-        "enum": ["replace", "find_replace", "append", "prepend", "delete"],
-        "description": "The type of edit to perform"
-      },
-      "content": {
-        "type": "string",
-        "description": "For replace: the new full notes. For append/prepend: the text to add. For delete: the text to remove."
-      },
-      "find": {
-        "type": "string",
-        "description": "For find_replace: the exact substring to find"
-      },
-      "replace": {
-        "type": "string",
-        "description": "For find_replace: the replacement text"
-      },
-      "replace_all": {
-        "type": "boolean",
-        "description": "For find_replace: replace all occurrences instead of just the first. Default: false."
-      }
-    },
-    "required": ["operation"]
-  }
-}
-```
 
 **Returns:** `{ version: number }`
 
@@ -558,6 +499,70 @@ Execute ad-hoc JavaScript in isolated-vm. For quick exploration, data transforma
 ```
 
 **Returns:** `{ result: any, logs: string[] }` — `logs` contains anything written to `console.log/warn/error`.
+
+---
+
+## LLM Generation
+
+A lightweight way to make a single LLM call without the overhead of a full sub-session. Useful for classification, extraction, summarization, translation, and batch processing where each item needs a small amount of reasoning.
+
+For full agent loops with tool access and conversation history, use sub-sessions instead (`spawn_session`).
+
+### `llm_generate`
+
+```json
+{
+  "name": "llm_generate",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "prompt": { "type": "string", "description": "The prompt to send to the LLM" },
+      "system": { "type": "string", "description": "Optional system prompt for the call" },
+      "intelligence": {
+        "type": "string",
+        "enum": ["low", "medium", "high"],
+        "description": "Model capability level. 'low' is cheap/fast (classification, extraction), 'medium' is the default workhorse, 'high' is the most capable. Default: low."
+      },
+      "schema": {
+        "type": "object",
+        "description": "JSON Schema for structured output. When provided, the LLM is constrained to return valid JSON matching this schema."
+      },
+      "max_tokens": { "type": "number", "description": "Max output tokens. Default: 4096." },
+      "temperature": { "type": "number", "description": "Sampling temperature (0-1). Default: 0." },
+      "images": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "File IDs of images to include as vision inputs (from the file workspace)"
+      }
+    },
+    "required": ["prompt"]
+  }
+}
+```
+
+**Returns:** `{ text: string, parsed?: any, usage: { input_tokens: number, output_tokens: number } }`
+
+`parsed` is present when `schema` was provided — the JSON result already parsed into an object.
+
+The `intelligence` parameter is an abstraction over model selection. The user configures which models map to which levels in settings (e.g. `low` → Claude Haiku, `medium` → Claude Sonnet, `high` → Claude Opus). The agent expresses intent; the user controls the cost/quality tradeoff.
+
+Default intelligence is `low` — the assumption is that if you're using this tool, you want something cheap and fast. The main agent is already the expensive call; its sub-calls should be frugal unless specifically asked for more.
+
+### Settings
+
+| Setting | Description |
+|---------|-------------|
+| `llm.low` | Model for `intelligence: 'low'` (e.g. Claude Haiku, GPT-4o-mini) |
+| `llm.medium` | Model for `intelligence: 'medium'` (e.g. Claude Sonnet) |
+| `llm.high` | Model for `intelligence: 'high'` (e.g. Claude Opus) |
+
+### When to use `llm_generate` vs sub-sessions
+
+| Need | Use | Why |
+|------|-----|-----|
+| Quick classification, extraction, summarization | `llm_generate` | Single LLM call, no tool access, no conversation state |
+| Complex multi-step reasoning with tool use | `spawn_session` | Full agent loop, tool access, own conversation history |
+| Batch processing inside a tool | `llm.generate()` in sandbox | Each item gets a cheap LLM call inside tool code |
 
 ---
 
@@ -1183,15 +1188,20 @@ Pause or resume a task without deleting it.
 
 ## Sub-Sessions
 
-A session can spawn sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism or a cheaper model. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
+A session can spawn or fork sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism, a cheaper model, or isolated exploration. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
 
-Sub-sessions have full access to all shared resources (tools, libraries, state, database, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
+Sub-sessions have full access to all shared resources (tools, libraries, skills, state, database, files, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
 
-Sub-sessions can spawn their own sub-sessions (max depth: 3). They can modify shared state (last-write-wins, same as parallel sessions).
+Sub-sessions can spawn/fork their own sub-sessions (max depth: 3). They can modify shared state (last-write-wins, same as parallel sessions).
+
+Two ways to create a sub-session:
+
+- **`spawn_session`** — fresh start. The sub-session gets only the task prompt as its initial message. Cheap, good for independent tasks.
+- **`fork_session`** — full context copy. The sub-session gets a copy of the parent's conversation history and notepad, plus the task appended. Expensive, good when the sub-task needs everything the parent knows.
 
 ### `spawn_session`
 
-Create and start a sub-session. Returns immediately — the sub-session runs independently.
+Create and start a fresh sub-session. Returns immediately — the sub-session runs independently.
 
 ```json
 {
@@ -1201,16 +1211,52 @@ Create and start a sub-session. Returns immediately — the sub-session runs ind
     "properties": {
       "task": { "type": "string", "description": "The instruction or message for the sub-session. This is what the sub-agent sees as its initial user message." },
       "model": { "type": "string", "description": "Model to use for the sub-session. Defaults to the current session's model. Use a cheaper/faster model for simple tasks." },
-      "token_limit": { "type": "number", "description": "Max tokens the sub-session can consume before being stopped. Defaults to the system-wide per-session limit." }
+      "token_limit": { "type": "number", "description": "Max tokens the sub-session can consume before being stopped. Defaults to the system-wide per-session limit." },
+      "copy_notepad": { "type": "boolean", "description": "Copy the parent's current notepad into the new session. Useful when the notepad contains working state the sub-session needs. Default: false." }
     },
     "required": ["task"]
   }
 }
 ```
 
-The sub-session inherits the current system prompt and learned notes. All tools, libraries, state, and database access are available.
+The sub-session inherits the current system prompt. All tools, libraries, skills, state, and database access are available. The conversation starts fresh with just the task prompt (plus optionally the parent's notepad).
 
 **Returns:** `{ id: string }` — the sub-session ID.
+
+### `fork_session`
+
+Create a sub-session that is a copy of the current session. The fork inherits the parent's conversation history (post-compaction, i.e. what the parent currently sees) and notepad. The task is appended as a new user message to the copied history.
+
+This is for sub-tasks that require the full context of what the parent has been doing — the fork already knows everything the parent knows, so the task instruction can be concise ("now do X with what we've found").
+
+```json
+{
+  "name": "fork_session",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "task": { "type": "string", "description": "Instruction for the fork. Appended as a new user message to the copied conversation history." },
+      "model": { "type": "string", "description": "Model to use. Defaults to the current session's model." },
+      "token_limit": { "type": "number", "description": "Max tokens the fork can consume." }
+    },
+    "required": ["task"]
+  }
+}
+```
+
+After the fork point, parent and child diverge completely. Changes to one session's notepad, conversation, or any tool calls do not affect the other. Global resources (state, database, files) are shared as always — last-write-wins.
+
+The fork copies the parent's **current working history** — meaning post-compaction if compaction has happened. This keeps the fork's starting token count reasonable even for long-running parent sessions.
+
+**Returns:** `{ id: string }` — the forked session ID.
+
+### When to use which
+
+| Approach | Context cost | Context quality | Use when |
+|----------|-------------|-----------------|----------|
+| `spawn_session` | Low | Task prompt only | Independent tasks, research, parallel work that doesn't need parent context |
+| `spawn_session` + `copy_notepad` | Low–medium | Task prompt + notepad | Tasks that need working state (plan, findings) but not the full conversation |
+| `fork_session` | High (full history) | Complete — everything the parent knows | Tasks that need the full reasoning chain, what-if exploration, decision-point branching |
 
 ### `wait_for_sessions`
 
@@ -1303,8 +1349,6 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | ------------------------ | ----------------- | ------ | ----------------------------------------------------------------------- |
 | `read_system_prompt`     | Self-modification | No     | Read the current stored system prompt                                   |
 | `edit_system_prompt`     | Self-modification | No     | Edit the system prompt (replace, find/replace, append, prepend, delete) |
-| `read_learned_notes`     | Self-modification | No     | Read the current learned notes                                          |
-| `edit_learned_notes`     | Self-modification | No     | Edit learned notes (same operations as prompt)                          |
 | `get_state`              | State             | No     | Read a state key                                                        |
 | `set_state`              | State             | No     | Write a state key                                                       |
 | `delete_state`           | State             | No     | Delete a state key                                                      |
@@ -1324,6 +1368,7 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `list_libraries`         | Libraries         | No     | List all libraries                                                      |
 | `read_library`           | Libraries         | No     | Read a library's full code                                              |
 | `run_sandbox_code`       | Code execution    | No     | Execute ad-hoc JS in sandbox                                            |
+| `llm_generate`           | LLM generation    | No     | Single LLM call with configurable intelligence level                    |
 | `create_ui_component`    | UI components     | No     | Create a stored React component                                         |
 | `update_ui_component`    | UI components     | No     | Update a stored component                                               |
 | `delete_ui_component`    | UI components     | No     | Delete a stored component                                               |
@@ -1349,8 +1394,32 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `cancel_scheduled_task`  | Scheduled tasks   | No     | Delete a scheduled task                                                 |
 | `enable_scheduled_task`  | Scheduled tasks   | No     | Resume a paused task                                                    |
 | `disable_scheduled_task` | Scheduled tasks   | No     | Pause a task without deleting it                                        |
-| `spawn_session`          | Sub-sessions      | No     | Spawn a sub-session with a task                                         |
+| `spawn_session`          | Sub-sessions      | No     | Spawn a fresh sub-session with a task                                   |
+| `fork_session`           | Sub-sessions      | No     | Fork current session (copies history + notepad) with a task             |
 | `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
 | `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
+| `web_search`             | Web               | No     | Search the web (see [Web](./Web.md))                                    |
+| `web_read`               | Web               | No     | Extract clean readable content from a URL (see [Web](./Web.md))         |
+| `file_list`              | Files             | No     | List files in the workspace (see [Files](./Files.md))                   |
+| `file_info`              | Files             | No     | Get file metadata                                                       |
+| `file_create`            | Files             | No     | Create a new file                                                       |
+| `file_delete`            | Files             | No     | Delete a file                                                           |
+| `file_read_text`         | Files             | No     | Read text file content (full or line range)                             |
+| `file_write_text`        | Files             | No     | Write text file content                                                 |
+| `file_replace_lines`     | Files             | No     | Replace a range of lines in a text file                                 |
+| `file_download`          | Files             | No     | Download a URL into the file workspace                                  |
+| `spreadsheet_*`          | Files             | No     | Spreadsheet operations (see [Files](./Files.md))                        |
+| `pdf_*`                  | Files             | No     | PDF operations (see [Files](./Files.md))                                |
+| `image_*`                | Files             | No     | Image operations (see [Files](./Files.md))                              |
+| `create_skill`           | Skills            | No     | Create a named knowledge document (see [Skills](./Skills.md))           |
+| `update_skill`           | Skills            | No     | Edit a skill's content or metadata                                      |
+| `delete_skill`           | Skills            | No     | Delete a skill                                                          |
+| `list_skills`            | Skills            | No     | List all skills (name + description + tags)                             |
+| `read_skill`             | Skills            | No     | Read a skill's full content                                             |
+| `enable_skill`           | Skills            | No     | Enable a disabled skill                                                 |
+| `disable_skill`          | Skills            | No     | Disable a skill without deleting it                                     |
+| `read_notepad`           | Session notepad   | No     | Read the session notepad (see [Session Notepad](./Session%20Notepad.md))|
+| `write_notepad`          | Session notepad   | No     | Replace the entire notepad content                                      |
+| `update_notepad`         | Session notepad   | No     | Surgical edit (find_replace, append, prepend, delete)                   |
 
 

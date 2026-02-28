@@ -127,6 +127,19 @@ Standard message list:
 
 If `options` are provided, render as buttons. Otherwise render as a text input.
 
+### File attachments
+
+The chat input area supports file attachments:
+
+- **Attachment button** next to the text input — opens a native file picker
+- **Drag-and-drop** on the message input area — visual drop zone with highlight
+- Attached files upload immediately to `POST /api/files/upload` and appear as chips below the input
+- When the message is sent, file IDs are included alongside the text so the agent knows files were attached
+
+Agent-created files appear in the chat stream as download cards (filename, size, type icon, download button). These are triggered by `file:created` SSE events. Modified files show an "updated" indicator via `file:modified` events.
+
+On Chromium browsers, a "Save to disk" option using the File System Access API can be offered as a progressive enhancement alongside the standard download.
+
 ### `send_message` rendering
 
 Messages from `send_message` (the non-pausing tool) appear as regular assistant messages in the chat stream. They should be visually indistinguishable from normal responses — the user doesn't need to know the difference.
@@ -182,12 +195,13 @@ The agent can create persistent UI components (via `create_ui_component`) that a
 Accessed via the gear icon. Could be a slide-over drawer or a separate page.
 
 Sections:
-- **System prompt** — read-only view with an edit button (or let the agent handle edits?)
-- **Learned notes** — read-only view
+- **System prompt** — read-only view with an edit button. Shows the full prompt including agent-appended observations. (Or let the agent handle edits?)
 - **Tools** — list of agent-created tools with name, description, enabled/disabled toggle. Click to view code.
 - **Libraries** — list of agent-created libraries with name, description. Click to view code.
 - **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.
+- **Skills** — list of agent and user-created skills with name, title, description, source badge (user/agent), enabled/disabled toggle. Click to view full markdown content. Create/edit/delete buttons. See [Skills](./Skills.md).
 - **Secrets** — manage API keys (add/edit/delete). Values are masked.
+- **Files** — file workspace browser. Lists all files with name, size, type, source, date. Download, delete, upload buttons. Shows total workspace usage vs limit.
 - **Database** — basic stats (table count, total size). Maybe a simple query runner for debugging.
 - **History** — version history of system prompt changes with diff view and rollback
 
@@ -201,6 +215,8 @@ Sessions are independent conversations, but they share:
 - `agent_config` (system prompt, learned notes)
 - `agent_tools`
 - `agent_ui_components`
+- `agent_skills`
+- `agent_files` (file workspace)
 - `agent_state`
 - `agent_data.db`
 
@@ -286,6 +302,18 @@ data: {"name":"Dashboard","action":"updated"}
 
 event: sessions:list
 data: {"action":"created","id":"sess_new"}
+
+event: file:created
+data: {"id":"f_abc123","name":"report.xlsx","size":45200,"mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","source_session_id":"sess_123"}
+
+event: file:modified
+data: {"id":"f_abc123","name":"report.xlsx","size":46100,"modified_on":"2026-02-25T14:30:00Z"}
+
+event: file:deleted
+data: {"id":"f_abc123"}
+
+event: skill:change
+data: {"name":"quarterly-reports","action":"created"}
 ```
 
 ### REST endpoints (client→server)
@@ -300,6 +328,10 @@ User actions go through normal REST calls. These don't need a persistent connect
 | Continue after token limit | POST | `/sessions/:id/continue` |
 | Read a state value | GET | `/state/:key` |
 | Write a state value | POST | `/state/:key` |
+| Upload a file | POST | `/files/upload` (multipart/form-data) |
+| Download a file | GET | `/files/:id/download` |
+| List files | GET | `/files` |
+| Delete a file | DELETE | `/files/:id` |
 
 ### Client-side architecture
 
@@ -317,12 +349,16 @@ SSE Connection (GET /events)
   │    Updates the chat panel and canvas for the currently viewed session
   │    Filters by the active session ID
   │
+  ├─ FileStore
+  │    ← file:created, file:modified, file:deleted
+  │    Updates file download cards in chat, file browser in settings
+  │
   ├─ StateStore
   │    ← state:change
   │    Feeds useAgentState hooks in rendered components
   │
   └─ ComponentStore
-       ← component:change
+       ← component:change, skill:change
        Updates page tabs when components are created/updated/deleted
 ```
 
