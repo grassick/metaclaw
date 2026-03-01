@@ -212,6 +212,17 @@ The agent manages the structure. It might use markdown checklists for progress, 
 
 ---
 
+## Relationship to task scoping
+
+The notepad and task scoping (`begin_task` / `end_task`) are complementary:
+
+- **Task scoping** cleans up the conversation — collapses intermediate tool calls into a summary, keeping the LLM's context window lean.
+- **The notepad** preserves cross-task working memory — the plan, overall findings, and decisions that need to survive across multiple tasks and through compaction.
+
+A typical pattern: the agent updates the notepad with key findings from a task, then calls `end_task` to collapse the detail. The notepad retains what matters; the conversation stays clean.
+
+---
+
 ## What the notepad is NOT
 
 - **Not global.** It's session-scoped. Each session has its own. Use `agent_state` or skills for cross-session knowledge.

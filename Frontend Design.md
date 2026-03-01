@@ -108,6 +108,7 @@ Standard message list:
 - **User messages** — right-aligned bubbles or left-aligned with distinct styling
 - **Assistant messages** — rendered as markdown
 - **Tool calls** — shown as collapsible "steps" between messages (tool name + short result preview)
+- **Collapsed tasks** — when the agent calls `end_task`, the intermediate messages are replaced with a summary block. See below.
 - **Pending interactions** — when the agent calls `ask_user`, the chat shows the question with buttons or a text input inline
 
 ### `ask_user` rendering
@@ -126,6 +127,25 @@ Standard message list:
 ```
 
 If `options` are provided, render as buttons. Otherwise render as a text input.
+
+### Collapsed task rendering
+
+When the agent calls `end_task`, the intermediate messages (tool calls, results, assistant reasoning) are collapsed in the chat. They're replaced with a summary block that can be expanded to review the detail:
+
+```
++----------------------------------------------+
+|  ┌─ Task: Analyze Sheet1                     |
+|  │  Found $45K discrepancy — duplicate EMEA  |
+|  │  rows 251-267. Removed 17 rows. Totals    |
+|  │  now match.                               |
+|  │  [▶ Show 9 steps]                         |
+|  └─                                          |
++----------------------------------------------+
+```
+
+Clicking "Show N steps" expands the block to show the original messages as they appeared during execution. The collapsed messages are archived in the session data, not deleted — the UI controls visibility, and the LLM sees only the summary.
+
+Nested tasks show nested collapsible blocks when expanded.
 
 ### File attachments
 

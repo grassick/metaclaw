@@ -556,13 +556,123 @@ Default intelligence is `low` — the assumption is that if you're using this to
 | `llm.medium` | Model for `intelligence: 'medium'` (e.g. Claude Sonnet) |
 | `llm.high` | Model for `intelligence: 'high'` (e.g. Claude Opus) |
 
-### When to use `llm_generate` vs sub-sessions
+---
 
-| Need | Use | Why |
-|------|-----|-----|
-| Quick classification, extraction, summarization | `llm_generate` | Single LLM call, no tool access, no conversation state |
-| Complex multi-step reasoning with tool use | `spawn_session` | Full agent loop, tool access, own conversation history |
-| Batch processing inside a tool | `llm.generate()` in sandbox | Each item gets a cheap LLM call inside tool code |
+## Task Scoping
+
+The agent can mark a section of work and then collapse it into a single summary, removing intermediate tool calls and results from the conversation history. This is the primary mechanism for keeping context clean during multi-step tasks.
+
+Every tool call and its result stays in the conversation history and gets sent to the LLM on every subsequent call. After 20 tool calls analyzing a spreadsheet, the context is full of cell values, format details, and intermediate reasoning that was useful at the time but is now dead weight. Task scoping solves this.
+
+### `begin_task`
+
+Mark the start of a scoped unit of work. Pushes a scope onto a stack (scopes can nest).
+
+```json
+{
+  "name": "begin_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "description": { "type": "string", "description": "Short description of the task being started" }
+    },
+    "required": ["description"]
+  }
+}
+```
+
+**Returns:** `{ task_id: string, depth: number }` — `depth` is the nesting level (1 for top-level task).
+
+### `end_task`
+
+Close the most recent open task scope. Everything between the matching `begin_task` and this `end_task` — tool calls, results, assistant messages, user messages — is collapsed and replaced with a single task result message. The collapsed messages are archived (viewable in the UI) but no longer in the LLM's context.
+
+```json
+{
+  "name": "end_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": { "type": "string", "description": "Summary of what was accomplished. This replaces all the intermediate messages in the conversation history." }
+    },
+    "required": ["summary"]
+  }
+}
+```
+
+**Returns:** `{ ok: true, messages_collapsed: number }`
+
+### How it works
+
+Before `end_task`:
+```
+[begin_task: "Analyze Sheet1"]
+  → spreadsheet_get_sheet_summary → {500 rows, cols A-F...}
+  → spreadsheet_read_range("A1:F5") → {header + 4 rows}
+  → spreadsheet_read_range("E2:E50") → {49 cell values}
+  → "Q3 column totals don't match the summary..."
+  → spreadsheet_read_range("E200:E267") → {67 cell values}
+  → "Found duplicate rows 251-267"
+  → spreadsheet_delete_rows(251, 17) → {ok}
+  → spreadsheet_read_range("E2:E250") → {verify totals}
+[end_task: "Found $45K discrepancy — duplicate EMEA rows 251-267. Removed 17 rows. Totals now match."]
+```
+
+After `end_task` — what the LLM sees going forward:
+```
+[Task: Analyze Sheet1 — Found $45K discrepancy — duplicate EMEA rows 251-267. Removed 17 rows. Totals now match.]
+```
+
+Nine messages become one. The savings compound across multiple tasks in a conversation.
+
+### Nesting
+
+Task scopes nest. Each `begin_task` pushes onto a stack; each `end_task` pops the most recent one. Inner scopes collapse first, so outer scopes work with already-clean history.
+
+```
+begin_task("Fix all spreadsheet issues")
+  begin_task("Analyze Sheet1")
+    → [15 tool calls]
+  end_task("Sheet1: found and fixed duplicate rows")
+  
+  begin_task("Analyze Sheet2")
+    → [8 tool calls]
+  end_task("Sheet2: no issues found")
+  
+  begin_task("Rebuild summary sheet")
+    → [6 tool calls]
+  end_task("Summary rebuilt with corrected formulas")
+end_task("Fixed 1 issue across 3 sheets. Removed duplicates in Sheet1, rebuilt summary. Sheet2 clean.")
+```
+
+After the outer `end_task`, the LLM sees one message. The user can expand it in the UI to see the sub-tasks and their individual steps.
+
+### Edge cases
+
+- **Forgetting `end_task`:** Harmless. The `begin_task` marker sits in history and the agent just has a fatter context than necessary. The pre-compaction warning can remind the agent: "You have an open task scope — consider closing it with `end_task`."
+- **User messages inside a scope:** Get collapsed with everything else. The agent should include anything important from the interaction in the `end_task` summary (e.g. "User confirmed they want ISO date format").
+- **`cancel_task`:** Not a separate tool — the agent can just ignore the open scope (no `end_task`), or call `end_task` with a summary like "Abandoned — approach didn't work."
+
+### Limits
+
+| Limit | Default |
+|-------|---------|
+| Max nesting depth | 4 |
+
+### Context management spectrum
+
+Task scoping is the everyday tool for keeping context clean. It fits into a broader spectrum of context management approaches:
+
+| Approach | What stays in context | Best for |
+|----------|----------------------|----------|
+| Direct tool calls | Everything | Single-step operations, quick lookups |
+| `run_sandbox_code` | One result (from `resolve()`) | Multi-step operations that don't need LLM reasoning between steps |
+| `llm.generate()` in sandbox | One tool result | Operations needing reasoning but not a full agent loop |
+| **`begin_task` / `end_task`** | **Just the summary** | **Multi-step work in the main session (most common)** |
+| `spawn_session` | Just the `report_result` | Independent tasks that don't need parent context |
+| `fork_session` | Just the `report_result` | Parallel exploration, isolation, what-if analysis |
+
+The agent should prefer task scoping for most multi-step work. Use sub-sessions for parallelism, isolation, or when a cheaper model should handle the grunt work.
 
 ---
 
@@ -1188,7 +1298,9 @@ Pause or resume a task without deleting it.
 
 ## Sub-Sessions
 
-A session can spawn or fork sub-sessions to delegate work — research tasks, data processing, summarization, or anything that benefits from parallelism, a cheaper model, or isolated exploration. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
+A session can spawn or fork sub-sessions for parallelism, isolation, or delegation to a cheaper model. Sub-sessions are real sessions with their own conversation history, visible in the UI nested under their parent.
+
+For keeping context clean during sequential work in a single session, prefer task scoping (`begin_task` / `end_task`) — it's simpler, has no UI overhead, and the user sees the work happen in real time. Sub-sessions are for when you genuinely need independent execution.
 
 Sub-sessions have full access to all shared resources (tools, libraries, skills, state, database, files, secrets, browser). They can interact with the user — if a sub-session calls `ask_user` or `render_and_wait`, it shows up as waiting for input in the UI, and the user can click into it and respond.
 
@@ -1196,8 +1308,8 @@ Sub-sessions can spawn/fork their own sub-sessions (max depth: 3). They can modi
 
 Two ways to create a sub-session:
 
-- **`spawn_session`** — fresh start. The sub-session gets only the task prompt as its initial message. Cheap, good for independent tasks.
-- **`fork_session`** — full context copy. The sub-session gets a copy of the parent's conversation history and notepad, plus the task appended. Expensive, good when the sub-task needs everything the parent knows.
+- **`spawn_session`** — fresh start. The sub-session gets only the task prompt as its initial message. Cheap, good for independent tasks and delegation to cheaper models.
+- **`fork_session`** — full context copy. The sub-session gets a copy of the parent's conversation history and notepad, plus the task appended. For parallel exploration and what-if analysis where the sub-task needs everything the parent knows.
 
 ### `spawn_session`
 
@@ -1250,13 +1362,14 @@ The fork copies the parent's **current working history** — meaning post-compac
 
 **Returns:** `{ id: string }` — the forked session ID.
 
-### When to use which
+### When to use sub-sessions vs task scoping
 
-| Approach | Context cost | Context quality | Use when |
-|----------|-------------|-----------------|----------|
-| `spawn_session` | Low | Task prompt only | Independent tasks, research, parallel work that doesn't need parent context |
-| `spawn_session` + `copy_notepad` | Low–medium | Task prompt + notepad | Tasks that need working state (plan, findings) but not the full conversation |
-| `fork_session` | High (full history) | Complete — everything the parent knows | Tasks that need the full reasoning chain, what-if exploration, decision-point branching |
+| Approach | Use when |
+|----------|----------|
+| `begin_task` / `end_task` | Sequential multi-step work in the main session. The everyday tool for context hygiene. |
+| `spawn_session` | Independent tasks, delegation to a cheaper model, parallel work that doesn't need parent context |
+| `spawn_session` + `copy_notepad` | Same, but the sub-task benefits from the parent's working state |
+| `fork_session` | Parallel exploration (try two approaches simultaneously), what-if analysis, risky operations that need rollback isolation |
 
 ### `wait_for_sessions`
 
@@ -1369,6 +1482,8 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `read_library`           | Libraries         | No     | Read a library's full code                                              |
 | `run_sandbox_code`       | Code execution    | No     | Execute ad-hoc JS in sandbox                                            |
 | `llm_generate`           | LLM generation    | No     | Single LLM call with configurable intelligence level                    |
+| `begin_task`             | Task scoping      | No     | Mark the start of a collapsible task scope                              |
+| `end_task`               | Task scoping      | No     | Collapse everything since begin_task into a summary                     |
 | `create_ui_component`    | UI components     | No     | Create a stored React component                                         |
 | `update_ui_component`    | UI components     | No     | Update a stored component                                               |
 | `delete_ui_component`    | UI components     | No     | Delete a stored component                                               |
