@@ -64,6 +64,10 @@ session.notepad.read(): Promise<string>
 session.notepad.write(content: string): Promise<void>
 session.notepad.append(text: string): Promise<void>
 
+// Task scoping (collapse intermediate work into a summary)
+session.beginTask(description: string): Promise<{ task_id: string, depth: number }>
+session.endTask(summary: string): Promise<{ messages_collapsed: number }>
+
 // LLM (single-call generation, no agent loop)
 llm.generate(prompt: string, options?: LlmOptions): Promise<LlmResult>
 
@@ -276,13 +280,22 @@ Skills are created and edited via meta-tools (`create_skill`, `update_skill`), n
 
 ### `session`
 
-Session-scoped notepad for working notes and task tracking. See [Session Notepad](./Session%20Notepad.md).
+Session-scoped notepad and task scoping. See [Session Notepad](./Session%20Notepad.md).
 
 ```typescript
+// Notepad — freeform working memory
 session.notepad.read(): Promise<string>
 session.notepad.write(content: string): Promise<void>
 session.notepad.append(text: string): Promise<void>
+
+// Task scoping — collapse intermediate work into a summary
+session.beginTask(description: string): Promise<{ task_id: string, depth: number }>
+session.endTask(summary: string): Promise<{ messages_collapsed: number }>
 ```
+
+`session.beginTask` marks the start of a scoped unit of work. `session.endTask` collapses everything since the matching `begin_task` into a single summary message, removing intermediate tool calls and results from the LLM's context. See [Built-in Tools — Task Scoping](./Built-in%20Tools.md#task-scoping) for full details.
+
+Useful inside agent-authored tools that perform many operations: begin a task scope at the start, do the work, end the scope with a summary. Only the summary appears in the conversation history.
 
 ### `llm`
 
