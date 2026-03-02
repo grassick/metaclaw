@@ -602,6 +602,41 @@ Close the most recent open task scope. Everything between the matching `begin_ta
 
 **Returns:** `{ ok: true, messages_collapsed: number }`
 
+### `cancel_task`
+
+Discard the most recent open task scope. Like `end_task`, collapses all intermediate messages and archives them — but instead of leaving a full summary, leaves a short cancelled marker. Use when a task hit a dead end, the approach didn't work, or the task is no longer needed.
+
+```json
+{
+  "name": "cancel_task",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "reason": { "type": "string", "description": "Short reason for cancellation. A one-line marker stays in context (e.g. '[Cancelled: Analyze Sheet1 — API rate limited, will retry later]'). Keep it brief — just enough to avoid repeating the same mistake." }
+    },
+    "required": ["reason"]
+  }
+}
+```
+
+**Returns:** `{ ok: true, messages_collapsed: number }`
+
+The difference from `end_task` is semantic and practical:
+
+- **`end_task`** says "this work produced a result worth remembering." The summary persists as a context-visible message that informs future decisions.
+- **`cancel_task`** says "this work was a dead end — throw it away." A single short marker remains so the agent doesn't walk back into the same dead end on the next turn.
+
+The reason is required because without it there's nothing preventing the agent from immediately retrying the same failed approach. Even for tasks cancelled because they were premature or irrelevant, a brief reason like "premature — need to finish Sheet1 first" costs almost nothing and prevents loops.
+
+When to use which:
+
+| Situation | Use |
+|-----------|-----|
+| Task succeeded, produced useful results | `end_task` with a summary |
+| Task partially succeeded, some findings worth keeping | `end_task` with a partial summary |
+| Task failed but the failure is informative (rate limit, wrong approach, dead end) | `cancel_task` with a reason |
+| Task was started prematurely or is no longer relevant | `cancel_task` with a reason ("premature", "superseded", etc.) |
+
 ### How it works
 
 Before `end_task`:
@@ -651,7 +686,7 @@ After the outer `end_task`, the LLM sees one message. The user can expand it in 
 
 - **Forgetting `end_task`:** Harmless. The `begin_task` marker sits in history and the agent just has a fatter context than necessary. The pre-compaction warning can remind the agent: "You have an open task scope — consider closing it with `end_task`."
 - **User messages inside a scope:** Get collapsed with everything else. The agent should include anything important from the interaction in the `end_task` summary (e.g. "User confirmed they want ISO date format").
-- **`cancel_task`:** Not a separate tool — the agent can just ignore the open scope (no `end_task`), or call `end_task` with a summary like "Abandoned — approach didn't work."
+- **Discarding a task:** Use `cancel_task` to cleanly discard a scope. The required `reason` leaves a one-line marker so the agent remembers what it tried and doesn't repeat the same mistake.
 
 ### Limits
 
@@ -669,10 +704,11 @@ Task scoping is the everyday tool for keeping context clean. It fits into a broa
 | `run_sandbox_code` | One result (from `resolve()`) | Multi-step operations that don't need LLM reasoning between steps |
 | `llm.generate()` in sandbox | One tool result | Operations needing reasoning but not a full agent loop |
 | **`begin_task` / `end_task`** | **Just the summary** | **Multi-step work in the main session (most common)** |
+| `cancel_task` | One-line cancelled marker | Dead ends, failed approaches, premature or irrelevant tasks |
 | `spawn_session` | Just the `report_result` | Independent tasks that don't need parent context |
 | `fork_session` | Just the `report_result` | Parallel exploration, isolation, what-if analysis |
 
-The agent should prefer task scoping for most multi-step work. Use sub-sessions for parallelism, isolation, or when a cheaper model should handle the grunt work.
+The agent should prefer task scoping for most multi-step work. Use `cancel_task` to cleanly discard dead ends. Use sub-sessions for parallelism, isolation, or when a cheaper model should handle the grunt work.
 
 ---
 
@@ -1367,6 +1403,7 @@ The fork copies the parent's **current working history** — meaning post-compac
 | Approach | Use when |
 |----------|----------|
 | `begin_task` / `end_task` | Sequential multi-step work in the main session. The everyday tool for context hygiene. |
+| `cancel_task` | A task hit a dead end or is no longer relevant — discard and reclaim context |
 | `spawn_session` | Independent tasks, delegation to a cheaper model, parallel work that doesn't need parent context |
 | `spawn_session` + `copy_notepad` | Same, but the sub-task benefits from the parent's working state |
 | `fork_session` | Parallel exploration (try two approaches simultaneously), what-if analysis, risky operations that need rollback isolation |
@@ -1484,6 +1521,7 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `llm_generate`           | LLM generation    | No     | Single LLM call with configurable intelligence level                    |
 | `begin_task`             | Task scoping      | No     | Mark the start of a collapsible task scope                              |
 | `end_task`               | Task scoping      | No     | Collapse everything since begin_task into a summary                     |
+| `cancel_task`            | Task scoping      | No     | Discard a task scope — collapse with minimal or no trace in context     |
 | `create_ui_component`    | UI components     | No     | Create a stored React component                                         |
 | `update_ui_component`    | UI components     | No     | Update a stored component                                               |
 | `delete_ui_component`    | UI components     | No     | Delete a stored component                                               |
