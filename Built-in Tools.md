@@ -604,7 +604,7 @@ Close the most recent open task scope. Everything between the matching `begin_ta
 
 ### `cancel_task`
 
-Discard the most recent open task scope. Like `end_task`, collapses all intermediate messages and archives them — but instead of leaving a summary, leaves a minimal cancelled marker or nothing at all. Use when a task hit a dead end, the approach didn't work, or the task is no longer needed.
+Discard the most recent open task scope. Like `end_task`, collapses all intermediate messages and archives them — but instead of leaving a full summary, leaves a short cancelled marker. Use when a task hit a dead end, the approach didn't work, or the task is no longer needed.
 
 ```json
 {
@@ -612,9 +612,9 @@ Discard the most recent open task scope. Like `end_task`, collapses all intermed
   "parameters": {
     "type": "object",
     "properties": {
-      "reason": { "type": "string", "description": "Optional short reason for cancellation. If provided, a one-line marker stays in context (e.g. '[Cancelled: Analyze Sheet1 — API rate limited, will retry later]'). If omitted, the entire scope is removed from context with no trace." }
+      "reason": { "type": "string", "description": "Short reason for cancellation. A one-line marker stays in context (e.g. '[Cancelled: Analyze Sheet1 — API rate limited, will retry later]'). Keep it brief — just enough to avoid repeating the same mistake." }
     },
-    "required": []
+    "required": ["reason"]
   }
 }
 ```
@@ -624,7 +624,9 @@ Discard the most recent open task scope. Like `end_task`, collapses all intermed
 The difference from `end_task` is semantic and practical:
 
 - **`end_task`** says "this work produced a result worth remembering." The summary persists as a context-visible message that informs future decisions.
-- **`cancel_task`** says "this work was a dead end — throw it away." With no `reason`, the scope vanishes completely from context. With a `reason`, a single short marker remains so the agent doesn't repeat the same failed approach.
+- **`cancel_task`** says "this work was a dead end — throw it away." A single short marker remains so the agent doesn't walk back into the same dead end on the next turn.
+
+The reason is required because without it there's nothing preventing the agent from immediately retrying the same failed approach. Even for tasks cancelled because they were premature or irrelevant, a brief reason like "premature — need to finish Sheet1 first" costs almost nothing and prevents loops.
 
 When to use which:
 
@@ -632,8 +634,8 @@ When to use which:
 |-----------|-----|
 | Task succeeded, produced useful results | `end_task` with a summary |
 | Task partially succeeded, some findings worth keeping | `end_task` with a partial summary |
-| Task failed but the failure is informative (rate limit, wrong approach) | `cancel_task` with a reason |
-| Task was started prematurely or is no longer relevant | `cancel_task` with no reason |
+| Task failed but the failure is informative (rate limit, wrong approach, dead end) | `cancel_task` with a reason |
+| Task was started prematurely or is no longer relevant | `cancel_task` with a reason ("premature", "superseded", etc.) |
 
 ### How it works
 
@@ -684,7 +686,7 @@ After the outer `end_task`, the LLM sees one message. The user can expand it in 
 
 - **Forgetting `end_task`:** Harmless. The `begin_task` marker sits in history and the agent just has a fatter context than necessary. The pre-compaction warning can remind the agent: "You have an open task scope — consider closing it with `end_task`."
 - **User messages inside a scope:** Get collapsed with everything else. The agent should include anything important from the interaction in the `end_task` summary (e.g. "User confirmed they want ISO date format").
-- **Discarding a task:** Use `cancel_task` to cleanly discard a scope. With a `reason`, a one-line marker stays so the agent remembers what it tried. Without a `reason`, the scope disappears entirely — useful when the task was started prematurely or is simply irrelevant now.
+- **Discarding a task:** Use `cancel_task` to cleanly discard a scope. The required `reason` leaves a one-line marker so the agent remembers what it tried and doesn't repeat the same mistake.
 
 ### Limits
 
@@ -702,8 +704,7 @@ Task scoping is the everyday tool for keeping context clean. It fits into a broa
 | `run_sandbox_code` | One result (from `resolve()`) | Multi-step operations that don't need LLM reasoning between steps |
 | `llm.generate()` in sandbox | One tool result | Operations needing reasoning but not a full agent loop |
 | **`begin_task` / `end_task`** | **Just the summary** | **Multi-step work in the main session (most common)** |
-| `cancel_task` (with reason) | One-line cancelled marker | Dead ends where the failure is worth remembering |
-| `cancel_task` (no reason) | Nothing | Premature or irrelevant tasks — total context reclamation |
+| `cancel_task` | One-line cancelled marker | Dead ends, failed approaches, premature or irrelevant tasks |
 | `spawn_session` | Just the `report_result` | Independent tasks that don't need parent context |
 | `fork_session` | Just the `report_result` | Parallel exploration, isolation, what-if analysis |
 
