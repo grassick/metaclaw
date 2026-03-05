@@ -21,6 +21,7 @@
 | Layer | Choice | Notes |
 |-------|--------|-------|
 | SDK | **Vercel AI SDK (`ai`)** | Provider-agnostic. Handles streaming, tool calling, multi-step agent loops. |
+| MCP client | **`@ai-sdk/mcp`** | MCP client integration for the AI SDK. `createMCPClient()` connects to MCP servers and outputs tools in AI SDK format. Supports stdio, HTTP, and SSE transports. |
 | Schemas | **Zod** | Meta-tools defined with Zod; AI SDK converts to JSON Schema for the LLM. Agent-created tools store raw JSON Schema in the DB and are passed via `jsonSchema()` from the AI SDK. |
 | Default model | **Claude Sonnet** (via `@ai-sdk/anthropic`) | Can swap providers without code changes thanks to the AI SDK abstraction. |
 

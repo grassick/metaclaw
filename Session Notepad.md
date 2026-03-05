@@ -236,8 +236,9 @@ A typical pattern: the agent updates the notepad with key findings from a task, 
 
 | Layer | Scope | In context | Survives compaction | Survives session end |
 |---|---|---|---|---|
-| System prompt | Global | Always (full text) | N/A | Yes (permanent) |
-| Skills | Global | Summary always; full text on demand | N/A | Yes (permanent) |
+| System prompt | Agent | Always (full text) | N/A | Yes (permanent) |
+| Skills | Agent | Summary always; full text on demand | N/A | Yes (permanent) |
+| MCP server tools | Agent | Summary always | N/A | Yes (until server disconnected) |
 | **Session notepad** | Session | Always (full text) | Yes | Archived with session |
 | Conversation history | Session | Yes (compacted over time) | Partially (summarized) | Archived with session |
-| State / Database | Global | On demand (via tool calls) | N/A | Yes (permanent) |
+| State / Database | Agent | On demand (via tool calls) | N/A | Yes (permanent) |

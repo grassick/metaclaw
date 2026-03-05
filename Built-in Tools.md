@@ -52,7 +52,7 @@ Every session has a token cap — the maximum tokens (input + output) it can con
 
 ## Self-Modification
 
-The agent's identity is stored as a single **system prompt** document — behavioral instructions, preferences, and accumulated observations all live here. The prompt typically has a core section (written at setup) and an agent-managed section where the agent appends things it learns ("user prefers dark mode", "timezone is EST"). For structured knowledge — procedures, standards, domain knowledge — the agent creates skills instead (see [Skills](./Skills.md)).
+Each agent's identity is stored as a single **system prompt** document — behavioral instructions, preferences, and accumulated observations all live here. The prompt typically has a core section (written at setup) and an agent-managed section where the agent appends things it learns ("user prefers dark mode", "timezone is EST"). For structured knowledge — procedures, standards, domain knowledge — the agent creates skills instead (see [Skills](./Skills.md)).
 
 > **Note:** The system prompt is in the LLM's context, but after mid-conversation edits the context still holds the old version until compaction. Use `read_system_prompt` to get the current stored version before making surgical edits.
 
@@ -1492,6 +1492,102 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 
 ---
 
+## MCP Servers
+
+MCP servers are **user-managed** — the agent cannot add, remove, or modify server configurations. stdio servers spawn child processes with full system access; even HTTP/SSE servers could be pointed at internal services. The user controls what's connected through the settings UI; the agent uses what's available.
+
+The agent has read-only meta-tools for discovering what's connected and accessing MCP resources and prompts. MCP tools appear in the agent's tool set automatically and are called like any other tool. See [MCP](./MCP.md) for architecture and lifecycle details.
+
+### `list_mcp_servers`
+
+```json
+{
+  "name": "list_mcp_servers",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ servers: { server_name, name, transport, status, tools: string[] }[] }`
+
+Only returns enabled, connected servers. `status` is a runtime value: `connected` or `error`.
+
+### `list_mcp_resources`
+
+```json
+{
+  "name": "list_mcp_resources",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "server_name": { "type": "string", "description": "Optional — list resources from a specific server. If omitted, lists from all connected servers." }
+    },
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ resources: { server_name, uri, name, description?, mime_type? }[] }`
+
+### `read_mcp_resource`
+
+```json
+{
+  "name": "read_mcp_resource",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "server_name": { "type": "string", "description": "Server that owns the resource" },
+      "uri": { "type": "string", "description": "Resource URI" }
+    },
+    "required": ["server_name", "uri"]
+  }
+}
+```
+
+**Returns:** `{ uri, content: string, mime_type? }`
+
+### `list_mcp_prompts`
+
+```json
+{
+  "name": "list_mcp_prompts",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "server_name": { "type": "string", "description": "Optional — filter to a specific server" }
+    },
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ prompts: { server_name, name, description?, arguments?: { name, description?, required? }[] }[] }`
+
+### `get_mcp_prompt`
+
+```json
+{
+  "name": "get_mcp_prompt",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "server_name": { "type": "string", "description": "Server that owns the prompt" },
+      "name": { "type": "string", "description": "Prompt name" },
+      "arguments": { "type": "object", "description": "Arguments to fill the prompt template" }
+    },
+    "required": ["server_name", "name"]
+  }
+}
+```
+
+**Returns:** `{ messages: { role: string, content: string }[] }`
+
+---
+
 ## Summary Table
 
 
@@ -1571,6 +1667,11 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 | `read_skill`             | Skills            | No     | Read a skill's full content                                             |
 | `enable_skill`           | Skills            | No     | Enable a disabled skill                                                 |
 | `disable_skill`          | Skills            | No     | Disable a skill without deleting it                                     |
+| `list_mcp_servers`       | MCP               | No     | List connected MCP servers and their tools (read-only)                  |
+| `list_mcp_resources`     | MCP               | No     | List resources from MCP servers                                         |
+| `read_mcp_resource`      | MCP               | No     | Read a resource by server name and URI                                  |
+| `list_mcp_prompts`       | MCP               | No     | List prompt templates from MCP servers                                  |
+| `get_mcp_prompt`         | MCP               | No     | Get a prompt template with arguments filled                             |
 | `read_notepad`           | Session notepad   | No     | Read the session notepad (see [Session Notepad](./Session%20Notepad.md))|
 | `write_notepad`          | Session notepad   | No     | Replace the entire notepad content                                      |
 | `update_notepad`         | Session notepad   | No     | Surgical edit (find_replace, append, prepend, delete)                   |
