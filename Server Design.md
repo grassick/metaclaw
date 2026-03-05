@@ -18,12 +18,17 @@ graph TD
         IsolatedVM[isolated-vm Sandbox]
         StateStore[State Store]
         Scheduler[Scheduler / Reminder Poller]
+        MCPManager[MCP Server Manager]
         SSE[SSE Event Stream]
     end
 
     subgraph storage [Persistent Storage]
         AppDB[(metaclaw.db)]
-        AgentDB[(agent_data.db)]
+        AgentDB[("agent_data_{id}.db")]
+    end
+
+    subgraph external [External MCP Servers]
+        MCPServers["stdio / HTTP / SSE"]
     end
 
     ChatPanel -->|"REST: message / toolResponse"| AgentLoop
@@ -32,6 +37,8 @@ graph TD
     AgentLoop -->|"executes"| MetaTools
     MetaTools -->|"runs user tools"| IsolatedVM
     MetaTools -->|"read/write"| StateStore
+    MetaTools -->|"routes MCP tool calls"| MCPManager
+    MCPManager -->|"MCP protocol"| MCPServers
     StateStore --> AppDB
     IsolatedVM --> AgentDB
     Scheduler -->|"fires reminders + tasks"| AgentLoop
@@ -39,9 +46,11 @@ graph TD
     SSE -->|"pushes updates"| client
 ```
 
-Two SQLite databases:
-- **`metaclaw.db`** — app-internal: sessions, config, tools, libraries, components, state, reminders, scheduled tasks, secrets, config history
-- **`agent_data.db`** — agent-controlled: tables the agent creates via `db_sql`. Completely separate so the agent can never touch app internals.
+The database supports multiple agents. Each agent has its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP server connections, and scheduled tasks. A fresh install creates a single `default` agent.
+
+Two kinds of SQLite databases:
+- **`metaclaw.db`** — app-internal: agents, sessions, tools, libraries, components, state, reminders, scheduled tasks, secrets, config history, MCP server configs, skills, files metadata
+- **`agent_data_{id}.db`** (one per agent) — agent-controlled: tables the agent creates via `db_sql`. Completely separate so the agent can never touch app internals. Each agent gets its own database file.
 
 ## Files to Copy from Monorepo
 
@@ -59,10 +68,11 @@ All types are SQLite-native. JSON is stored as `text` and parsed in application 
 
 ### `agent_sessions` (from copied code, extended)
 
-Stores conversation history, status, pending tool calls. Extended with sub-session, forking, and token limit support.
+Stores conversation history, status, pending tool calls. Extended with sub-session, forking, and token limit support. Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
+| `agent_id` | text | FK to `agents` |
 | `parent_session_id` | text | FK to parent session (null for top-level sessions) |
 | `parent_tool_call_id` | text | The `wait_for_sessions` tool call ID this sub-session reports to |
 | `forked_from_session_id` | text | If this session was created via `fork_session`, the session it was forked from (null for spawned/top-level sessions) |
@@ -71,24 +81,28 @@ Stores conversation history, status, pending tool calls. Extended with sub-sessi
 | `token_usage` | integer | Tokens consumed so far |
 | `notepad` | text | Session-scoped freeform markdown scratchpad (see [Session Notepad](./Session%20Notepad.md)) |
 
-### `agent_config`
+### `agents`
 
-Single-row table holding the agent's mutable identity.
+Each row defines an agent — its identity, system prompt, and default model. A fresh install creates one row with `_id = 'default'`.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `_id` | text | Always `'default'` |
+| `_id` | text | Unique agent slug (e.g. `default`, `work`, `code-assistant`) |
+| `name` | text | Human-readable display name |
 | `system_prompt` | text | The agent's system prompt — core instructions plus agent-appended observations |
-| `version` | integer | Auto-incremented on every edit (for rollback) |
-| `modified_on` | text | ISO 8601 timestamp |
+| `model` | text | Default model for this agent's sessions (null = system default) |
+| `version` | integer | Auto-incremented on every config edit (for rollback) |
+| `created_on` | text | ISO 8601 |
+| `modified_on` | text | ISO 8601 |
 
 ### `agent_tools`
 
-Each row is a tool the agent has created.
+Each row is a tool the agent has created. Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `_id` | text | Tool name (unique, snake_case) |
+| `_id` | text | Tool name (unique per agent, snake_case) |
+| `agent_id` | text | FK to `agents` |
 | `description` | text | Human-readable description (shown to LLM in tool list) |
 | `parameter_schema` | text | JSON Schema for the tool's parameters (stored as JSON string) |
 | `code` | text | JavaScript code executed in isolated-vm |
@@ -99,11 +113,12 @@ Each row is a tool the agent has created.
 
 ### `agent_libraries`
 
-Shared code modules loadable via `require('name')` in the sandbox.
+Shared code modules loadable via `require('name')` in the sandbox. Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `_id` | text | Library name (unique, snake_case) |
+| `_id` | text | Library name (unique per agent, snake_case) |
+| `agent_id` | text | FK to `agents` |
 | `description` | text | What this library provides |
 | `code` | text | CommonJS module code (`exports.foo = ...` or `module.exports = ...`) |
 | `version` | integer | Auto-incremented on update |
@@ -112,11 +127,12 @@ Shared code modules loadable via `require('name')` in the sandbox.
 
 ### `agent_ui_components`
 
-Reusable React components / "pages" the agent has created.
+Reusable React components / "pages" the agent has created. Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `_id` | text | Component name (unique) |
+| `_id` | text | Component name (unique per agent) |
+| `agent_id` | text | FK to `agents` |
 | `description` | text | What this component does |
 | `code` | text | React/JSX component code |
 | `props_schema` | text | Optional JSON Schema describing expected props |
@@ -126,11 +142,12 @@ Reusable React components / "pages" the agent has created.
 
 ### `agent_state`
 
-Key-value store for persistent agent state.
+Key-value store for persistent agent state. Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `key` | text | State key (primary key) |
+| `agent_id` | text | FK to `agents` |
+| `key` | text | State key (primary key is `(agent_id, key)`) |
 | `value` | text | Arbitrary JSON value |
 | `modified_on` | text | ISO 8601 |
 
@@ -159,11 +176,12 @@ Session-scoped one-shot reminders. The server polls this table and injects the r
 
 ### `agent_scheduled_tasks`
 
-System-level automated jobs. Not tied to any session. Each firing creates a fresh session with the task's prompt. The server polls this table on an interval (~30s).
+System-level automated jobs. Not tied to any session. Each firing creates a fresh session with the task's prompt. The server polls this table on an interval (~30s). Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `_id` | text | Unique task ID (generated) |
+| `agent_id` | text | FK to `agents` |
 | `name` | text | Human-readable label |
 | `task` | text | Task prompt — becomes the initial user message in each fresh session |
 | `type` | text | `once` or `cron` |
@@ -178,17 +196,38 @@ System-level automated jobs. Not tied to any session. Each firing creates a fres
 
 ### `agent_skills`
 
-Named markdown documents the agent can reference. See [Skills](./Skills.md).
+Named markdown documents the agent can reference. See [Skills](./Skills.md). Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `_id` | text | Unique slug (e.g. `quarterly-excel-reports`) |
+| `agent_id` | text | FK to `agents` |
 | `title` | text | Human-readable title |
 | `description` | text | Brief description (shown in system prompt summary for discovery) |
 | `content` | text | Full markdown content |
 | `tags` | text | JSON array of tags for categorization |
 | `source` | text | `user` or `agent` |
 | `version` | integer | Auto-incremented on update |
+| `enabled` | integer | 1/0 |
+| `created_on` | text | ISO 8601 |
+| `modified_on` | text | ISO 8601 |
+
+### `agent_mcp_servers`
+
+MCP server configurations. Scoped per agent. See [MCP](./MCP.md).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_id` | text | Unique server slug (e.g. `postgres-main`, `github`) |
+| `agent_id` | text | FK to `agents` |
+| `name` | text | Human-readable display name |
+| `transport` | text | `stdio`, `http`, or `sse` |
+| `command` | text | For stdio: command to run |
+| `args` | text | For stdio: JSON array of command arguments |
+| `url` | text | For http/sse: server URL |
+| `headers` | text | For http/sse: JSON object of headers |
+| `env` | text | For stdio: JSON object of environment variables |
+| `tool_prefix` | text | Optional prefix for tool names to avoid collisions |
 | `enabled` | integer | 1/0 |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
@@ -211,12 +250,13 @@ File workspace metadata. Actual file data lives on disk in `files/`. See [Files]
 
 ### `agent_config_history`
 
-Audit log for prompt/notes changes (for rollback).
+Audit log for system prompt changes (for rollback). Scoped per agent.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `_id` | integer | Auto-increment primary key |
-| `version` | integer | Matches `agent_config.version` at time of change |
+| `agent_id` | text | FK to `agents` |
+| `version` | integer | Matches `agents.version` at time of change |
 | `system_prompt` | text | Snapshot |
 | `created_on` | text | ISO 8601 |
 
@@ -226,16 +266,17 @@ Create `PersonalAgentImplementation` implementing the `AgentImplementation` inte
 
 ### System prompt construction
 
-On each session init and at compaction time, dynamically build the system prompt from:
+On each session init and at compaction time, dynamically build the system prompt from the session's agent context:
 
-1. The current `agent_config.system_prompt` (includes core instructions and agent-appended observations)
+1. The agent's `system_prompt` from the `agents` table (includes core instructions and agent-appended observations)
 2. The current date/time (so the agent can compute timestamps for reminders and scheduling)
-3. A summary of available tools (name + description for each enabled tool in `agent_tools`)
-4. A summary of available libraries (name + description from `agent_libraries`)
-5. A summary of available UI components (name + description from `agent_ui_components`)
+3. A summary of available tools (name + description for each enabled tool in `agent_tools` for this agent)
+4. A summary of available libraries (name + description from `agent_libraries` for this agent)
+5. A summary of available UI components (name + description from `agent_ui_components` for this agent)
 6. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
-7. A summary of available skills (name + title + description + tags from `agent_skills` — see [Skills](./Skills.md))
-8. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
+7. A summary of available skills (name + title + description + tags from `agent_skills` for this agent — see [Skills](./Skills.md))
+8. A summary of connected MCP servers and their tools (server name + tool names from `agent_mcp_servers` for this agent — see [MCP](./MCP.md))
+9. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
 
 This keeps the agent aware of its full capability set without loading all tool/library code into context.
 
@@ -248,7 +289,9 @@ When the LLM calls a tool name that matches a row in `agent_tools`, the implemen
 3. Executes the code in isolated-vm with the full sandbox runtime injected (see [Sandbox Runtime](./Sandbox%20Runtime.md))
 4. Returns the script's result as the tool result to the LLM
 
-The tool set passed to `getTools()` is built dynamically each step: merge the hardcoded meta-tools with tool definitions loaded from `agent_tools`. Agent-created tools store raw JSON Schema in the DB and are passed to the Vercel AI SDK via `jsonSchema()`.
+When the LLM calls a tool name that matches a connected MCP server's tool, the implementation routes the call through the MCP client. See [MCP](./MCP.md).
+
+The tool set passed to `getTools()` is built dynamically each step: merge the hardcoded meta-tools with tool definitions loaded from `agent_tools` (for this agent) and tools from connected MCP servers (for this agent). Agent-created tools store raw JSON Schema in the DB and are passed to the Vercel AI SDK via `jsonSchema()`. MCP tools come pre-formatted from `@ai-sdk/mcp`'s `client.tools()`.
 
 ### Scheduler
 
@@ -267,14 +310,17 @@ Emitters:
 - State store → `state:change`
 - Component/tool/library/skill CRUD → `component:change`
 - File operations → `file:created`, `file:modified`, `file:deleted` (see [Files](./Files.md))
+- MCP server status → `mcp:status` (connected, disconnected, error — see [MCP](./MCP.md))
 - Session creation/deletion → `sessions:list`
 - Scheduler → `session:status` (when a reminder/task fires)
 
 ## Key Design Decisions
 
-- **Two SQLite databases**: app internals (`metaclaw.db`) and agent data (`agent_data.db`) are completely separate. The agent can never read or modify its own session history, tools table, or config — only through the meta-tools.
-- **Dynamic tool set per step**: `getTools()` queries the database each time. Tool creation takes effect immediately on the next LLM call.
-- **Single system prompt**: the agent's identity is one document — core instructions at the top, agent-appended observations at the bottom. For structured knowledge, the agent creates skills. Config history provides rollback.
+- **Multiple agents, one app**: the `agents` table supports multiple agent definitions, each with its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. A fresh install creates a single `default` agent. Secrets and files are global (user-level, not agent-level). Each agent gets its own `agent_data_{id}.db`.
+- **App DB vs agent DBs**: app internals (`metaclaw.db`) and agent data (`agent_data_{id}.db`) are completely separate. The agent can never read or modify its own session history, tools table, or config — only through the meta-tools.
+- **Dynamic tool set per step**: `getTools()` queries the database and MCP clients each time. Tool creation and MCP server connections take effect immediately on the next LLM call.
+- **MCP for external integrations**: agents extend their capabilities by connecting MCP servers rather than building everything from scratch in the sandbox. The Vercel AI SDK handles protocol details. See [MCP](./MCP.md).
+- **Single system prompt per agent**: each agent's identity is one document — core instructions at the top, agent-appended observations at the bottom. For structured knowledge, the agent creates skills. Config history provides rollback.
 - **Libraries enable code reuse**: tools are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
 - **Reminders vs scheduled tasks**: reminders are session-scoped and one-shot (wake an existing session). Scheduled tasks are system-level (create fresh sessions each firing). See [Built-in Tools](./Built-in%20Tools.md#reminders) for details.
 - **Files on disk, metadata in SQLite**: files are stored in `files/` on disk (can be 10–50 MB) with metadata in `agent_files`. Format-specific operations (spreadsheet, PDF, image) run server-side via ExcelJS, pdf-lib, sharp — the sandbox gets proxy stubs. See [Files](./Files.md).

@@ -8,7 +8,7 @@ React + Vite + Bootstrap 5. No CSS-in-JS. The UI has two levels: a **session lis
 
 ```
 +-----------------------------------------------------+
-|  Metaclaw                    [+ New Session]  [gear] |
+|  Metaclaw        [Agent ▾]   [+ New Session]  [gear] |
 +------------+----------------------------------------+
 |            |                                        |
 |  Sessions  |   Session View                         |
@@ -24,7 +24,9 @@ React + Vite + Bootstrap 5. No CSS-in-JS. The UI has two levels: a **session lis
 +------------+----------------------------------------+
 ```
 
-The session sidebar is collapsible on narrow screens. Each session shows a title (auto-generated from first message or agent-assigned) and a short timestamp. Active sessions could show a subtle indicator.
+The **agent switcher** dropdown in the top nav shows the current agent's name and lets the user switch between agents. Switching agents changes the session list, settings context, and which agent handles new sessions. A fresh install has a single `default` agent; the dropdown is hidden until a second agent is created.
+
+The session sidebar is collapsible on narrow screens. Each session shows a title (auto-generated from first message or agent-assigned) and a short timestamp. Active sessions could show a subtle indicator. Sessions are scoped to the current agent.
 
 ---
 
@@ -214,15 +216,19 @@ The agent can create persistent UI components (via `create_ui_component`) that a
 
 Accessed via the gear icon. Could be a slide-over drawer or a separate page.
 
+Settings are scoped to the current agent unless noted. Switching agents in the top nav (see below) changes which agent's settings are shown.
+
 Sections:
 - **System prompt** — read-only view with an edit button. Shows the full prompt including agent-appended observations. (Or let the agent handle edits?)
 - **Tools** — list of agent-created tools with name, description, enabled/disabled toggle. Click to view code.
 - **Libraries** — list of agent-created libraries with name, description. Click to view code.
+- **MCP Servers** — list of connected MCP servers with name, transport type, status indicator (green/red/yellow dot), enabled toggle. Add server form with transport picker and relevant fields. Click to view tool list, resources, and connection status. Remove button. See [MCP](./MCP.md). **User-managed only** — the agent cannot add or modify servers.
 - **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.
 - **Skills** — list of agent and user-created skills with name, title, description, source badge (user/agent), enabled/disabled toggle. Click to view full markdown content. Create/edit/delete buttons. See [Skills](./Skills.md).
-- **Secrets** — manage API keys (add/edit/delete). Values are masked.
-- **Files** — file workspace browser. Lists all files with name, size, type, source, date. Download, delete, upload buttons. Shows total workspace usage vs limit.
-- **Database** — basic stats (table count, total size). Maybe a simple query runner for debugging.
+- **Agents** — list of all agents with name and model. Create new agents, rename, delete (except `default`). Each agent has its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. *This section is global, not scoped to the current agent.*
+- **Secrets** — manage API keys (add/edit/delete). Values are masked. *Global — shared across all agents.*
+- **Files** — file workspace browser. Lists all files with name, size, type, source, date. Download, delete, upload buttons. Shows total workspace usage vs limit. *Global — shared across all agents.*
+- **Database** — basic stats (table count, total size). Maybe a simple query runner for debugging. *Scoped to current agent's `agent_data_{id}.db`.*
 - **History** — version history of system prompt changes with diff view and rollback
 
 > **Open question:** Should the user be able to edit the system prompt directly from settings, or should that be agent-only? There's an argument for giving the user a "hard override" that the agent can't undo, but that complicates the versioning model.
@@ -231,20 +237,23 @@ Sections:
 
 ## Shared State and Multi-Session Weirdness
 
-Sessions are independent conversations, but they share:
-- `agent_config` (system prompt, learned notes)
-- `agent_tools`
-- `agent_ui_components`
-- `agent_skills`
-- `agent_files` (file workspace)
-- `agent_state`
-- `agent_data.db`
+Sessions within the same agent are independent conversations, but they share:
+- `agents` row (system prompt)
+- `agent_tools` (for this agent)
+- `agent_ui_components` (for this agent)
+- `agent_skills` (for this agent)
+- `agent_mcp_servers` (for this agent)
+- `agent_state` (for this agent)
+- `agent_data_{id}.db` (for this agent)
+- `agent_files` (global — shared across all agents)
+- `agent_secrets` (global — shared across all agents)
 
 This means:
-1. Session A creates a tool. Session B can immediately use it.
+1. Session A creates a tool. Session B (same agent) can immediately use it.
 2. Session A modifies the system prompt. Session B won't see the change until its next compaction.
 3. Session A writes to `state.set('counter', 5)`. Session B reads `state.get('counter')` and gets 5.
 4. Both sessions write to the same state key — last write wins, no conflict resolution.
+5. Different agents are fully isolated (separate tools, state, skills, sessions) except for files and secrets.
 
 ### How bad is this?
 
@@ -334,6 +343,12 @@ data: {"id":"f_abc123"}
 
 event: skill:change
 data: {"name":"quarterly-reports","action":"created"}
+
+event: mcp:status
+data: {"server_name":"github","status":"connected","tools":["create_issue","list_repos"]}
+
+event: mcp:status
+data: {"server_name":"postgres-main","status":"disconnected","error":"Connection refused"}
 ```
 
 ### REST endpoints (client→server)
@@ -377,9 +392,13 @@ SSE Connection (GET /events)
   │    ← state:change
   │    Feeds useAgentState hooks in rendered components
   │
-  └─ ComponentStore
-       ← component:change, skill:change
-       Updates page tabs when components are created/updated/deleted
+  ├─ ComponentStore
+  │    ← component:change, skill:change
+  │    Updates page tabs when components are created/updated/deleted
+  │
+  └─ MCPStore
+       ← mcp:status
+       Updates MCP server status indicators in settings
 ```
 
 ### How `useAgentState` stays live

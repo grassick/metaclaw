@@ -59,6 +59,10 @@ files.image.*        // sharp-backed image operations
 skills.list(tag?: string): Promise<{ name: string, title: string, description: string, tags: string[] }[]>
 skills.read(name: string): Promise<{ name: string, title: string, description: string, content: string, tags: string[] }>
 
+// MCP resources (read-only in sandbox — see MCP.md)
+mcp.resources(serverName?: string): Promise<{ server_name: string, uri: string, name: string, description?: string, mime_type?: string }[]>
+mcp.readResource(serverName: string, uri: string): Promise<{ uri: string, content: string, mime_type?: string }>
+
 // Session notepad (see Session Notepad.md)
 session.notepad.read(): Promise<string>
 session.notepad.write(content: string): Promise<void>
@@ -277,6 +281,17 @@ skills.read(name: string): Promise<{ name, title, description, content, tags }>
 ```
 
 Skills are created and edited via meta-tools (`create_skill`, `update_skill`), not from sandbox code. Sandbox access is read-only so agent-authored tools can reference skill content without side effects.
+
+### `mcp`
+
+Read-only access to MCP server resources. See [MCP](./MCP.md).
+
+```typescript
+mcp.resources(serverName?: string): Promise<{ server_name, uri, name, description?, mime_type? }[]>
+mcp.readResource(serverName: string, uri: string): Promise<{ uri, content, mime_type? }>
+```
+
+Lists and reads resources from connected MCP servers. MCP tools are not callable from sandbox code — they're LLM-facing and called like any other tool. Resources are read-only data, safe to expose in the sandbox.
 
 ### `session`
 
