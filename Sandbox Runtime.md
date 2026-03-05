@@ -59,7 +59,8 @@ files.image.*        // sharp-backed image operations
 skills.list(tag?: string): Promise<{ name: string, title: string, description: string, tags: string[] }[]>
 skills.read(name: string): Promise<{ name: string, title: string, description: string, content: string, tags: string[] }>
 
-// MCP resources (read-only in sandbox — see MCP.md)
+// MCP (see MCP.md)
+mcp.callTool(serverName: string, toolName: string, args?: object): Promise<any>
 mcp.resources(serverName?: string): Promise<{ server_name: string, uri: string, name: string, description?: string, mime_type?: string }[]>
 mcp.readResource(serverName: string, uri: string): Promise<{ uri: string, content: string, mime_type?: string }>
 
@@ -284,14 +285,17 @@ Skills are created and edited via meta-tools (`create_skill`, `update_skill`), n
 
 ### `mcp`
 
-Read-only access to MCP server resources. See [MCP](./MCP.md).
+Access to MCP server tools and resources from sandbox code. See [MCP](./MCP.md).
 
 ```typescript
+mcp.callTool(serverName: string, toolName: string, args?: object): Promise<any>
 mcp.resources(serverName?: string): Promise<{ server_name, uri, name, description?, mime_type? }[]>
 mcp.readResource(serverName: string, uri: string): Promise<{ uri, content, mime_type? }>
 ```
 
-Lists and reads resources from connected MCP servers. MCP tools are not callable from sandbox code — they're LLM-facing and called like any other tool. Resources are read-only data, safe to expose in the sandbox.
+`mcp.callTool` invokes a tool on a connected MCP server. The user already made the trust decision when they configured the server — sandbox code calling an MCP tool is no different from the LLM calling it. Capped at 50 calls per sandbox execution (same rationale as `llm.generate`).
+
+`mcp.resources` and `mcp.readResource` list and read resources (read-only data) from connected servers.
 
 ### `session`
 
@@ -392,4 +396,6 @@ for (const [id, description] of rows.rows) {
 | `fetch` timeout | 30 seconds |
 | `llm.generate` max calls per execution | 50 |
 | `llm.generate` timeout per call | 30 seconds |
+| `mcp.callTool` max calls per execution | 50 |
+| `mcp.callTool` timeout per call | 30 seconds |
 | `setTimeout` max delay | 30 seconds |

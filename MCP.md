@@ -245,14 +245,17 @@ Only returns enabled servers. `status` is a runtime value: `connected` or `error
 
 ## Sandbox API
 
-Read-only access to MCP resources from agent-authored tools and `run_sandbox_code`:
+Available in agent-authored tools and `run_sandbox_code`:
 
 ```typescript
+mcp.callTool(serverName: string, toolName: string, args?: object): Promise<any>
 mcp.resources(serverName?: string): Promise<{ server_name, uri, name, description?, mime_type? }[]>
 mcp.readResource(serverName: string, uri: string): Promise<{ uri, content: string, mime_type? }>
 ```
 
-MCP tools are not callable from sandbox code — they're LLM-facing. If an agent-authored tool needs to call an external service, it uses `fetch()` directly. MCP resources are read-only data, so exposing them in the sandbox is safe and useful.
+`mcp.callTool` lets sandbox code invoke MCP tools directly. The user already made the trust decision when they configured the server — sandbox code calling an MCP tool has the same blast radius as the LLM calling it. Capped at 50 calls per sandbox execution to prevent runaway loops (same guardrail as `llm.generate`).
+
+`mcp.resources` and `mcp.readResource` provide read-only access to MCP server resources.
 
 ---
 
