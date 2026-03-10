@@ -317,10 +317,10 @@ When a UI component calls `callBackend(functionName, args)`, the request hits `P
 
 1. Loads the function's `code` and `parameter_schema` from `agent_functions`
 2. Validates the args against the schema
-3. Executes the code in isolated-vm with the standard sandbox runtime, minus session-scoped APIs (`session.*` is not available — there is no session) and minus `llm.generate()` (to prevent invisible token burn from UI interactions)
+3. Executes the code in isolated-vm with the standard sandbox runtime (minus `session.*` and `browser.*` which are inherently session-scoped — see [Sandbox Runtime](./Sandbox%20Runtime.md#function-execution-context))
 4. Returns the result as JSON to the frontend
 
-This path bypasses the LLM entirely — no session, no conversation history, no token cost. Functions share the same sandbox, agent database, state, files, libraries, and secrets as tools. They are the backend half of agent-built applications; tools are the LLM's API to the world.
+This path does not involve a session or conversation history. Functions share the same sandbox, agent database, state, files, libraries, secrets, and `llm.generate()` as tools. They are the backend half of agent-built applications; tools are the LLM's API to the world. A function can call the LLM if needed (e.g. a "summarize" button) — usage guardrails apply at the agent level regardless of whether the call originated from a tool or a function.
 
 Functions are also callable from within tool and sandbox code via `functions.call(name, args)` — see [Sandbox Runtime](./Sandbox%20Runtime.md). This lets tools reuse function logic without duplicating it.
 
@@ -353,7 +353,7 @@ Emitters:
 - **Dynamic tool set per step**: `getTools()` queries the database and MCP clients each time. Tool creation and MCP server connections take effect immediately on the next LLM call.
 - **MCP for external integrations**: agents extend their capabilities by connecting MCP servers rather than building everything from scratch in the sandbox. The Vercel AI SDK handles protocol details. See [MCP](./MCP.md).
 - **Single system prompt per agent**: each agent's identity is one document — core instructions at the top, agent-appended observations at the bottom. For structured knowledge, the agent creates skills. Config history provides rollback.
-- **Tools vs functions**: tools are the LLM's API — called during sessions, results go into conversation context as text. Functions are the UI's API — called directly from frontend components via HTTP, results are structured JSON, no session or LLM involved. They are separate concepts (`agent_tools` and `agent_functions`) with separate management meta-tools, but they share the same sandbox runtime, agent database, state, files, secrets, and libraries. Tools can call functions via `functions.call()` in the sandbox; functions cannot call the LLM.
+- **Tools vs functions**: tools are the LLM's API — called during sessions, results go into conversation context as text. Functions are the UI's API — called directly from frontend components via HTTP, results are structured JSON, no session involved. They are separate concepts (`agent_tools` and `agent_functions`) with separate management meta-tools, but they share the same sandbox runtime, agent database, state, files, secrets, libraries, and `llm.generate()`. Tools can call functions via `functions.call()` in the sandbox. The only APIs unavailable to functions are `session.*` and `browser.*`, which are inherently session-scoped.
 - **Libraries enable code reuse**: tools and functions are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
 - **Reminders vs scheduled tasks**: reminders are session-scoped and one-shot (wake an existing session). Scheduled tasks are system-level (create fresh sessions each firing). See [Built-in Tools](./Built-in%20Tools.md#reminders) for details.
 - **Files on disk, metadata in SQLite**: files are stored in `files/` on disk (can be 10–50 MB) with metadata in `agent_files`. Format-specific operations (spreadsheet, PDF, image) run server-side via ExcelJS, pdf-lib, sharp — the sandbox gets proxy stubs. See [Files](./Files.md).

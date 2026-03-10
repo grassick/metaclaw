@@ -2,7 +2,7 @@
 
 This defines everything available to agent-authored code running in isolated-vm — agent-created tools, agent-created functions, and ad-hoc `run_sandbox_code` invocations. There are no Node.js APIs and no file system access. Every external capability is injected by the host as a callback. Code reuse across tools and functions is handled by `require()`, which loads agent-created libraries.
 
-Functions run in the same sandbox as tools but with a reduced API surface — see [Function execution context](#function-execution-context) for details.
+Functions run in the same sandbox as tools — see [Function execution context](#function-execution-context) for the minor differences (no session or browser context, since functions run outside any session).
 
 ## Quick reference
 
@@ -400,27 +400,16 @@ for (const [id, description] of rows.rows) {
 
 ## Function execution context
 
-When code runs via direct function invocation (`POST /agents/:agentId/functions/:name/invoke` from the frontend), the sandbox has the same APIs as tool execution with these differences:
+When code runs via direct function invocation (`POST /agents/:agentId/functions/:name/invoke` from the frontend), the sandbox has the same APIs as tool execution with two exceptions that are inherent to the architecture, not artificial restrictions:
 
 **Not available in function execution:**
 
 | API | Reason |
 |-----|--------|
-| `llm.generate()` | Prevents invisible token burn from UI interactions. If the UI needs LLM reasoning, it should use `sendMessage` to route through a session. |
 | `session.*` (notepad, task scoping) | There is no session — functions run outside any conversation context. |
-| `browser.*` | Headless browser is session-scoped; functions are stateless request-response. |
+| `browser.*` | Browser contexts are session-scoped; functions have no associated session. |
 
-**Available (same as tools):**
-
-`args`, `resolve()`, `console.*`, `fetch`, `web.*`, `state.*`, `db.*`, `files.*`, `skills.*`, `mcp.*`, `functions.call()`, `require()`, `secrets`, `btoa`, `atob`, `parseCSV`, `setTimeout`, `clearTimeout`
-
-**Stricter limits:**
-
-| Limit | Function default | Tool default |
-|-------|-----------------|--------------|
-| Execution timeout | 5 seconds | 30 seconds |
-
-Functions back UI interactions — button clicks, page loads, form submissions. They should be fast. If an operation needs 30 seconds, it belongs in a tool called from a session, not in a function called from a button.
+Everything else works the same — `llm.generate()`, `fetch`, `web.*`, `state.*`, `db.*`, `files.*`, `skills.*`, `mcp.*`, `functions.call()`, `require()`, `secrets`, and all utilities. A function that needs to call the LLM (e.g. backing a "summarize this" button) can do so directly. Usage guardrails on spending and token limits apply at the agent level regardless of whether the LLM call originated from a tool or a function.
 
 ---
 
@@ -437,7 +426,7 @@ Functions back UI interactions — button clicks, page loads, form submissions. 
 
 | Limit | Default |
 |-------|---------|
-| Execution timeout | 30 seconds (5 seconds for direct function invocations) |
+| Execution timeout | 30 seconds |
 | Memory | 128 MB per isolate |
 | `require()` max depth | 10 (nested library requires) |
 | `db.sql` query timeout | 5 seconds |
