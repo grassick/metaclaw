@@ -34,6 +34,7 @@ graph TD
     ChatPanel -->|"REST: message / toolResponse"| AgentLoop
     CanvasPanel -->|"REST: toolResponse"| AgentLoop
     CanvasPanel -->|"REST: read/write state"| StateStore
+    CanvasPanel -->|"REST: invoke function"| IsolatedVM
     AgentLoop -->|"executes"| MetaTools
     MetaTools -->|"runs user tools"| IsolatedVM
     MetaTools -->|"read/write"| StateStore
@@ -46,10 +47,10 @@ graph TD
     SSE -->|"pushes updates"| client
 ```
 
-The database supports multiple agents. Each agent has its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP server connections, and scheduled tasks. A fresh install creates a single `default` agent.
+The database supports multiple agents. Each agent has its own system prompt, tools, functions, libraries, skills, UI components, state, sessions, MCP server connections, and scheduled tasks. A fresh install creates a single `default` agent.
 
 Two kinds of SQLite databases:
-- **`metaclaw.db`** — app-internal: agents, sessions, tools, libraries, components, state, reminders, scheduled tasks, secrets, config history, MCP server configs, skills, files metadata
+- **`metaclaw.db`** — app-internal: agents, sessions, tools, functions, libraries, components, state, reminders, scheduled tasks, secrets, config history, MCP server configs, skills, files metadata
 - **`agent_data_{id}.db`** (one per agent) — agent-controlled: tables the agent creates via `db_sql`. Completely separate so the agent can never touch app internals. Each agent gets its own database file.
 
 ## Files to Copy from Monorepo
@@ -108,6 +109,22 @@ Each row is a tool the agent has created. Scoped per agent.
 | `code` | text | JavaScript code executed in isolated-vm |
 | `version` | integer | Auto-incremented on update |
 | `enabled` | integer | 1/0 — whether this tool appears in the active tool set |
+| `created_on` | text | ISO 8601 |
+| `modified_on` | text | ISO 8601 |
+
+### `agent_functions`
+
+Backend functions callable directly from UI components via `callBackend()`. Unlike tools (which are called by the LLM during sessions and return text for conversation context), functions are called by frontend code via HTTP and return structured JSON. They share the same sandbox runtime and agent-scoped resources (state, database, files, libraries) but run outside any session context. Scoped per agent.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `_id` | text | Function name (unique per agent, snake_case) |
+| `agent_id` | text | FK to `agents` |
+| `description` | text | What this function does (for the LLM when authoring components, not at call time) |
+| `parameter_schema` | text | JSON Schema for the function's input parameters (stored as JSON string) |
+| `code` | text | JavaScript code executed in isolated-vm |
+| `version` | integer | Auto-incremented on update |
+| `enabled` | integer | 1/0 — whether this function is callable |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
@@ -271,12 +288,13 @@ On each session init and at compaction time, dynamically build the system prompt
 1. The agent's `system_prompt` from the `agents` table (includes core instructions and agent-appended observations)
 2. The current date/time (so the agent can compute timestamps for reminders and scheduling)
 3. A summary of available tools (name + description for each enabled tool in `agent_tools` for this agent)
-4. A summary of available libraries (name + description from `agent_libraries` for this agent)
-5. A summary of available UI components (name + description from `agent_ui_components` for this agent)
-6. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
-7. A summary of available skills (name + title + description + tags from `agent_skills` for this agent — see [Skills](./Skills.md))
-8. A summary of connected MCP servers and their tools (server name + tool names from `agent_mcp_servers` for this agent — see [MCP](./MCP.md))
-9. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
+4. A summary of available functions (name + description for each enabled function in `agent_functions` for this agent)
+5. A summary of available libraries (name + description from `agent_libraries` for this agent)
+6. A summary of available UI components (name + description from `agent_ui_components` for this agent)
+7. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
+8. A summary of available skills (name + title + description + tags from `agent_skills` for this agent — see [Skills](./Skills.md))
+9. A summary of connected MCP servers and their tools (server name + tool names from `agent_mcp_servers` for this agent — see [MCP](./MCP.md))
+10. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
 
 This keeps the agent aware of its full capability set without loading all tool/library code into context.
 
@@ -292,6 +310,19 @@ When the LLM calls a tool name that matches a row in `agent_tools`, the implemen
 When the LLM calls a tool name that matches a connected MCP server's tool, the implementation routes the call through the MCP client. See [MCP](./MCP.md).
 
 The tool set passed to `getTools()` is built dynamically each step: merge the hardcoded meta-tools with tool definitions loaded from `agent_tools` (for this agent) and tools from connected MCP servers (for this agent). Agent-created tools store raw JSON Schema in the DB and are passed to the Vercel AI SDK via `jsonSchema()`. MCP tools come pre-formatted from `@ai-sdk/mcp`'s `client.tools()`.
+
+### Direct function invocation
+
+When a UI component calls `callBackend(functionName, args)`, the request hits `POST /agents/:agentId/functions/:name/invoke`. The server:
+
+1. Loads the function's `code` and `parameter_schema` from `agent_functions`
+2. Validates the args against the schema
+3. Executes the code in isolated-vm with the standard sandbox runtime, minus session-scoped APIs (`session.*` is not available — there is no session) and minus `llm.generate()` (to prevent invisible token burn from UI interactions)
+4. Returns the result as JSON to the frontend
+
+This path bypasses the LLM entirely — no session, no conversation history, no token cost. Functions share the same sandbox, agent database, state, files, libraries, and secrets as tools. They are the backend half of agent-built applications; tools are the LLM's API to the world.
+
+Functions are also callable from within tool and sandbox code via `functions.call(name, args)` — see [Sandbox Runtime](./Sandbox%20Runtime.md). This lets tools reuse function logic without duplicating it.
 
 ### Scheduler
 
@@ -309,6 +340,7 @@ Emitters:
 - Sub-sessions → `session:spawned`, `session:completed`
 - State store → `state:change`
 - Component/tool/library/skill CRUD → `component:change`
+- Function CRUD → `function:change`
 - File operations → `file:created`, `file:modified`, `file:deleted` (see [Files](./Files.md))
 - MCP server status → `mcp:status` (connected, disconnected, error — see [MCP](./MCP.md))
 - Session creation/deletion → `sessions:list`
@@ -316,12 +348,13 @@ Emitters:
 
 ## Key Design Decisions
 
-- **Multiple agents, one app**: the `agents` table supports multiple agent definitions, each with its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. A fresh install creates a single `default` agent. Secrets and files are global (user-level, not agent-level). Each agent gets its own `agent_data_{id}.db`.
+- **Multiple agents, one app**: the `agents` table supports multiple agent definitions, each with its own system prompt, tools, functions, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. A fresh install creates a single `default` agent. Secrets and files are global (user-level, not agent-level). Each agent gets its own `agent_data_{id}.db`.
 - **App DB vs agent DBs**: app internals (`metaclaw.db`) and agent data (`agent_data_{id}.db`) are completely separate. The agent can never read or modify its own session history, tools table, or config — only through the meta-tools.
 - **Dynamic tool set per step**: `getTools()` queries the database and MCP clients each time. Tool creation and MCP server connections take effect immediately on the next LLM call.
 - **MCP for external integrations**: agents extend their capabilities by connecting MCP servers rather than building everything from scratch in the sandbox. The Vercel AI SDK handles protocol details. See [MCP](./MCP.md).
 - **Single system prompt per agent**: each agent's identity is one document — core instructions at the top, agent-appended observations at the bottom. For structured knowledge, the agent creates skills. Config history provides rollback.
-- **Libraries enable code reuse**: tools are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
+- **Tools vs functions**: tools are the LLM's API — called during sessions, results go into conversation context as text. Functions are the UI's API — called directly from frontend components via HTTP, results are structured JSON, no session or LLM involved. They are separate concepts (`agent_tools` and `agent_functions`) with separate management meta-tools, but they share the same sandbox runtime, agent database, state, files, secrets, and libraries. Tools can call functions via `functions.call()` in the sandbox; functions cannot call the LLM.
+- **Libraries enable code reuse**: tools and functions are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
 - **Reminders vs scheduled tasks**: reminders are session-scoped and one-shot (wake an existing session). Scheduled tasks are system-level (create fresh sessions each firing). See [Built-in Tools](./Built-in%20Tools.md#reminders) for details.
 - **Files on disk, metadata in SQLite**: files are stored in `files/` on disk (can be 10–50 MB) with metadata in `agent_files`. Format-specific operations (spreadsheet, PDF, image) run server-side via ExcelJS, pdf-lib, sharp — the sandbox gets proxy stubs. See [Files](./Files.md).
 - **Skills for structured knowledge**: discrete markdown documents with name + description for selective loading. The agent appends quick facts to its system prompt; procedures and domain knowledge become skills. See [Skills](./Skills.md).

@@ -1,6 +1,8 @@
 # Sandbox Runtime
 
-This defines everything available to agent-authored code running in isolated-vm — both agent-created tools and ad-hoc `run_sandbox_code` invocations. There are no Node.js APIs and no file system access. Every external capability is injected by the host as a callback. Code reuse across tools is handled by `require()`, which loads agent-created libraries.
+This defines everything available to agent-authored code running in isolated-vm — agent-created tools, agent-created functions, and ad-hoc `run_sandbox_code` invocations. There are no Node.js APIs and no file system access. Every external capability is injected by the host as a callback. Code reuse across tools and functions is handled by `require()`, which loads agent-created libraries.
+
+Functions run in the same sandbox as tools but with a reduced API surface — see [Function execution context](#function-execution-context) for details.
 
 ## Quick reference
 
@@ -54,6 +56,9 @@ files.appendBytes(id: string, base64data: string): Promise<void>
 files.spreadsheet.*  // ExcelJS-backed spreadsheet operations
 files.pdf.*          // pdf-lib + pdfjs-dist PDF operations
 files.image.*        // sharp-backed image operations
+
+// Functions (call agent-created backend functions — see Built-in Tools.md)
+functions.call(name: string, args?: object): Promise<any>
 
 // Skills (read-only in sandbox — see Skills.md)
 skills.list(tag?: string): Promise<{ name: string, title: string, description: string, tags: string[] }[]>
@@ -272,6 +277,24 @@ File management, text access, and format-specific APIs. All operations run on th
 
 Generic and text operations are on `files.*` directly. Format-specific APIs are sub-namespaces: `files.spreadsheet.*`, `files.pdf.*`, `files.image.*`.
 
+### `functions`
+
+Call agent-created backend functions by name. This lets tool code and `run_sandbox_code` reuse function logic without duplicating it. The function runs in-process (no HTTP round-trip) with the same sandbox context.
+
+```typescript
+functions.call(name: string, args?: object): Promise<any>
+```
+
+The function's `parameter_schema` is validated against the provided args. The return value is whatever the function's code passes to `resolve()` or returns.
+
+```typescript
+const tasks = await functions.call('list_tasks', { status: 'active' })
+const formatted = tasks.map(t => `- ${t.title} (${t.priority})`).join('\n')
+resolve(`Active tasks:\n${formatted}`)
+```
+
+This is the recommended way for tools to access the same data operations that UI components use. The function is the canonical data access layer; the tool wraps it with LLM-friendly formatting.
+
 ### `skills`
 
 Read-only access to agent skills. See [Skills](./Skills.md).
@@ -375,6 +398,32 @@ for (const [id, description] of rows.rows) {
 
 ---
 
+## Function execution context
+
+When code runs via direct function invocation (`POST /agents/:agentId/functions/:name/invoke` from the frontend), the sandbox has the same APIs as tool execution with these differences:
+
+**Not available in function execution:**
+
+| API | Reason |
+|-----|--------|
+| `llm.generate()` | Prevents invisible token burn from UI interactions. If the UI needs LLM reasoning, it should use `sendMessage` to route through a session. |
+| `session.*` (notepad, task scoping) | There is no session — functions run outside any conversation context. |
+| `browser.*` | Headless browser is session-scoped; functions are stateless request-response. |
+
+**Available (same as tools):**
+
+`args`, `resolve()`, `console.*`, `fetch`, `web.*`, `state.*`, `db.*`, `files.*`, `skills.*`, `mcp.*`, `functions.call()`, `require()`, `secrets`, `btoa`, `atob`, `parseCSV`, `setTimeout`, `clearTimeout`
+
+**Stricter limits:**
+
+| Limit | Function default | Tool default |
+|-------|-----------------|--------------|
+| Execution timeout | 5 seconds | 30 seconds |
+
+Functions back UI interactions — button clicks, page loads, form submissions. They should be fast. If an operation needs 30 seconds, it belongs in a tool called from a session, not in a function called from a button.
+
+---
+
 ## What's NOT available
 
 - `import` — no ES module syntax (use `require()` for agent libraries)
@@ -388,7 +437,7 @@ for (const [id, description] of rows.rows) {
 
 | Limit | Default |
 |-------|---------|
-| Execution timeout | 30 seconds |
+| Execution timeout | 30 seconds (5 seconds for direct function invocations) |
 | Memory | 128 MB per isolate |
 | `require()` max depth | 10 (nested library requires) |
 | `db.sql` query timeout | 5 seconds |
