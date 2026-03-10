@@ -386,9 +386,147 @@ Returns the full definition including code and parameter schema.
 
 ---
 
+## Function Management
+
+CRUD operations on backend functions stored in `agent_functions`. Functions are the backend counterpart to UI components — called directly from frontend code via `callBackend()`, bypassing the LLM entirely. They return structured JSON and run in the same sandbox as tools, with access to the same agent database, state, files, libraries, and secrets. See [Sandbox Runtime](./Sandbox%20Runtime.md) for what's available in function code.
+
+Functions are a separate concept from tools. Tools are the LLM's API (called during sessions, results go into conversation context). Functions are the UI's API (called via HTTP from components, results are JSON consumed by code). The LLM manages both, but they serve different consumers.
+
+### `create_function`
+
+```json
+{
+  "name": "create_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Unique snake_case function name" },
+      "description": { "type": "string", "description": "What this function does (for reference when authoring components that call it)" },
+      "parameter_schema": {
+        "type": "object",
+        "description": "JSON Schema defining the function's input parameters"
+      },
+      "code": { "type": "string", "description": "JavaScript code to execute in isolated-vm. Receives `args` (validated params) as a global. Must return a value or call `resolve(value)`. The return value is sent as JSON to the calling UI component." }
+    },
+    "required": ["name", "description", "parameter_schema", "code"]
+  }
+}
+```
+
+**Returns:** `{ name: string, version: 1 }`
+
+### `update_function`
+
+Partial update — only the provided fields are changed.
+
+```json
+{
+  "name": "update_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Name of the function to update" },
+      "description": { "type": "string" },
+      "parameter_schema": { "type": "object" },
+      "code": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name: string, version: number }`
+
+### `delete_function`
+
+```json
+{
+  "name": "delete_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "Name of the function to delete" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ deleted: boolean }`
+
+### `enable_function` / `disable_function`
+
+Toggle whether a function is callable from the frontend.
+
+```json
+{
+  "name": "enable_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+```json
+{
+  "name": "disable_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name: string, enabled: boolean }`
+
+### `list_functions`
+
+```json
+{
+  "name": "list_functions",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "include_disabled": { "type": "boolean", "description": "Include disabled functions in the list. Default: false." }
+    },
+    "required": []
+  }
+}
+```
+
+**Returns:** `{ functions: { name, description, enabled, version }[] }`
+
+### `read_function`
+
+Returns the full definition including code and parameter schema.
+
+```json
+{
+  "name": "read_function",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" }
+    },
+    "required": ["name"]
+  }
+}
+```
+
+**Returns:** `{ name, description, parameter_schema, code, enabled, version }`
+
+---
+
 ## Libraries
 
-Shared code modules stored in `agent_libraries`. Tools and `run_sandbox_code` load them via `require('name')` in the sandbox. Libraries can require other libraries. This is the mechanism for building up reusable code — utilities, API wrappers, data transformers, etc.
+Shared code modules stored in `agent_libraries`. Tools, functions, and `run_sandbox_code` load them via `require('name')` in the sandbox. Libraries can require other libraries. This is the mechanism for building up reusable code — utilities, API wrappers, data transformers, etc.
 
 ### `create_library`
 
@@ -1608,6 +1746,13 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | `disable_tool`           | Tool management   | No     | Disable a tool without deleting it                                      |
 | `list_tools`             | Tool management   | No     | List all agent-defined tools                                            |
 | `read_tool`              | Tool management   | No     | Read a tool's full definition including code                            |
+| `create_function`        | Function management | No   | Create a new backend function callable from UI                          |
+| `update_function`        | Function management | No   | Update a function's code, schema, or description                        |
+| `delete_function`        | Function management | No   | Delete a function                                                       |
+| `enable_function`        | Function management | No   | Enable a disabled function                                              |
+| `disable_function`       | Function management | No   | Disable a function without deleting it                                  |
+| `list_functions`         | Function management | No   | List all backend functions                                              |
+| `read_function`          | Function management | No   | Read a function's full definition including code                        |
 | `create_library`         | Libraries         | No     | Create a shared code library                                            |
 | `update_library`         | Libraries         | No     | Update a library's code or description                                  |
 | `delete_library`         | Libraries         | No     | Delete a library                                                        |

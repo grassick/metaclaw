@@ -206,9 +206,10 @@ The agent can create persistent UI components (via `create_ui_component`) that a
 - **Chat** is always the first tab
 - Agent-created pages appear as additional tabs
 - Clicking a tab renders that stored component in the main area
-- Pages can use `useAgentState` for live data and `sendMessage` to talk to the agent
+- Pages use `callBackend` for data operations (no LLM, no session, no tokens) and `useAgentState` for live state
+- Pages can still use `sendMessage` to talk to the agent in the active session when genuine conversation is needed
 
-> **Open question:** Should pages be top-level (visible across sessions) or per-session? They're stored globally in `agent_ui_components`, so they're inherently cross-session. But if a page uses `callTool`, which session does that go to?
+Pages are top-level — visible across sessions, stored globally in `agent_ui_components`. Data operations go through `callBackend()`, which calls backend functions directly via HTTP without any session involvement. This resolves the "which session?" problem: most page interactions don't need a session at all. For the rare case where a page needs to invoke the LLM (e.g. a "generate summary" button), it uses `sendMessage` to post into the active session's chat.
 
 ---
 
@@ -221,6 +222,7 @@ Settings are scoped to the current agent unless noted. Switching agents in the t
 Sections:
 - **System prompt** — read-only view with an edit button. Shows the full prompt including agent-appended observations. (Or let the agent handle edits?)
 - **Tools** — list of agent-created tools with name, description, enabled/disabled toggle. Click to view code.
+- **Functions** — list of agent-created backend functions with name, description, enabled/disabled toggle. Click to view code and parameter schema. These are the functions callable from UI components via `callBackend()`.
 - **Libraries** — list of agent-created libraries with name, description. Click to view code.
 - **MCP Servers** — list of connected MCP servers with name, transport type, status indicator (green/red/yellow dot), enabled toggle. Add server form with transport picker and relevant fields. Click to view tool list, resources, and connection status. Remove button. See [MCP](./MCP.md). **User-managed only** — the agent cannot add or modify servers.
 - **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.
@@ -240,6 +242,7 @@ Sections:
 Sessions within the same agent are independent conversations, but they share:
 - `agents` row (system prompt)
 - `agent_tools` (for this agent)
+- `agent_functions` (for this agent)
 - `agent_ui_components` (for this agent)
 - `agent_skills` (for this agent)
 - `agent_mcp_servers` (for this agent)
@@ -344,6 +347,9 @@ data: {"id":"f_abc123"}
 event: skill:change
 data: {"name":"quarterly-reports","action":"created"}
 
+event: function:change
+data: {"name":"list_tasks","action":"created"}
+
 event: mcp:status
 data: {"server_name":"github","status":"connected","tools":["create_issue","list_repos"]}
 
@@ -361,6 +367,7 @@ User actions go through normal REST calls. These don't need a persistent connect
 | Respond to ask_user / render_and_wait | POST | `/sessions/:id/tool-response` |
 | Create a new session | POST | `/sessions` |
 | Continue after token limit | POST | `/sessions/:id/continue` |
+| Invoke a backend function | POST | `/agents/:agentId/functions/:name/invoke` |
 | Read a state value | GET | `/state/:key` |
 | Write a state value | POST | `/state/:key` |
 | Upload a file | POST | `/files/upload` (multipart/form-data) |
@@ -395,6 +402,10 @@ SSE Connection (GET /events)
   ├─ ComponentStore
   │    ← component:change, skill:change
   │    Updates page tabs when components are created/updated/deleted
+  │
+  ├─ FunctionStore
+  │    ← function:change
+  │    Tracks available backend functions (for callBackend resolution)
   │
   └─ MCPStore
        ← mcp:status
@@ -491,7 +502,8 @@ Plus the communication hooks:
 | Hook/Function | Description |
 |---------------|-------------|
 | `useAgentState(key)` | `[value, setValue]` — reads `agent_state` via REST on mount, stays live via SSE `state:change` events. Writes via REST. No LLM. |
-| `callTool(action, payload)` | Sends a `toolResponse` to the pending `render_and_wait` call. Resumes the LLM. |
+| `callBackend(functionName, args)` | Calls a backend function (from `agent_functions`) directly via `POST /agents/:agentId/functions/:name/invoke`. Returns a `Promise<any>` with the function's JSON result. No session, no LLM, no token cost. This is the primary mechanism for UI components to perform data operations. |
+| `callTool(action, payload)` | Sends a `toolResponse` to the pending `render_and_wait` call. Resumes the LLM. Only usable from components rendered via `render_and_wait`. |
 | `sendMessage(text)` | Sends a `userMessage`. Equivalent to typing in the chat box. |
 | `importModule(pkg)` | Dynamic CDN import via esm.sh. Returns the module. Cached. |
 | `loadStylesheet(url)` | Injects a `<link>` tag. Deduplicates by URL. |
