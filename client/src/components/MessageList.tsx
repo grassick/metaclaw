@@ -15,6 +15,24 @@ interface DisplayItem {
   result?: unknown
 }
 
+function unwrapToolOutput(output: unknown): unknown {
+  if (!output || typeof output !== "object") return output
+
+  const typedOutput = output as { type?: string; value?: unknown; reason?: string }
+  switch (typedOutput.type) {
+    case "text":
+    case "json":
+    case "error-text":
+    case "error-json":
+    case "content":
+      return typedOutput.value
+    case "execution-denied":
+      return typedOutput.reason ? { denied: true, reason: typedOutput.reason } : { denied: true }
+    default:
+      return output
+  }
+}
+
 function parseMessages(messages: unknown[]): DisplayItem[] {
   const items: DisplayItem[] = []
   const toolResults = new Map<string, unknown>()
@@ -26,7 +44,7 @@ function parseMessages(messages: unknown[]): DisplayItem[] {
       for (const part of m.content) {
         const p = part as Record<string, unknown>
         if (p.type === "tool-result") {
-          toolResults.set(p.toolCallId as string, p.result ?? p.output)
+          toolResults.set(p.toolCallId as string, unwrapToolOutput(p.result ?? p.output))
         }
       }
     }

@@ -281,10 +281,18 @@ function truncateForSSE(value: unknown): unknown {
 }
 
 function toToolResultOutput(value: unknown): ToolResultPart["output"] {
-  // AI SDK v6 requires output to be an object, not a primitive
-  if (value === null || value === undefined) return { result: null } as any
-  if (typeof value !== "object") return { result: value } as any
-  return value as ToolResultPart["output"]
+  if (value && typeof value === "object" && "type" in (value as Record<string, unknown>)) {
+    return value as ToolResultPart["output"]
+  }
+
+  if (typeof value === "string") {
+    return { type: "text", value }
+  }
+
+  return {
+    type: "json",
+    value: value === undefined ? null : value as any,
+  }
 }
 
 function isAbortError(err: unknown): boolean {
