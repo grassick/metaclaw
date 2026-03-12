@@ -11,13 +11,18 @@ class AppEventBus extends EventEmitter {
 
   addSSEClient(client: SSEClient) {
     this.sseClients.add(client)
+    console.log(`[sse] client connected (${this.sseClients.size} total)`)
   }
 
   removeSSEClient(client: SSEClient) {
     this.sseClients.delete(client)
+    console.log(`[sse] client disconnected (${this.sseClients.size} total)`)
   }
 
   broadcast(eventType: string, data: unknown) {
+    if (eventType !== "session:stream") {
+      console.log(`[sse] broadcast ${eventType} to ${this.sseClients.size} clients:`, JSON.stringify(data).slice(0, 200))
+    }
     const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`
     for (const client of this.sseClients) {
       client.res.write(payload)

@@ -6,7 +6,7 @@ import { buildSystemPrompt } from "./PersonalAgent"
 import { createOpenRouterProvider } from "../openRouterProvider"
 import { eventBus } from "../events"
 
-const DEFAULT_MODEL = "anthropic/claude-sonnet-4-20250514"
+const DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
 const MAX_STEPS = 25
 
 export class SessionController {
@@ -59,6 +59,7 @@ export class SessionController {
   // ================================================================
 
   async handleUserMessage(sessionId: string, content: string): Promise<void> {
+    console.log(`[agent] handleUserMessage session=${sessionId} content=${content.slice(0, 100)}`)
     const session = this.getSession(sessionId)
     if (!session) throw new Error("Session not found")
     if (session.status === "completed" || session.status === "error") {
@@ -126,6 +127,9 @@ export class SessionController {
     const modelId = session.model ?? agent.model ?? DEFAULT_MODEL
     const model = this.openrouter(modelId)
 
+    console.log(`[agent] runAgentStep session=${sessionId} model=${modelId} messages=${messages.length} tools=${Object.keys(createMetaTools({ agentId: agent._id, sessionId, db: this.db })).join(",")}`)
+    console.log(`[agent] system prompt length=${systemPrompt.length}`)
+
     const tools = createMetaTools({
       agentId: agent._id,
       sessionId,
@@ -133,6 +137,7 @@ export class SessionController {
     }) as ToolSet
 
     try {
+      console.log(`[agent] calling streamText...`)
       const result = streamText({
         model,
         system: systemPrompt,
@@ -141,12 +146,14 @@ export class SessionController {
         stopWhen: stepCountIs(MAX_STEPS),
       })
 
+      console.log(`[agent] iterating fullStream...`)
       for await (const part of result.fullStream) {
         switch (part.type) {
           case "text-delta":
             eventBus.broadcast("session:stream", { id: sessionId, delta: part.text })
             break
           case "tool-call":
+            console.log(`[agent] tool-call: ${part.toolName}(${JSON.stringify(part.input).slice(0, 200)})`)
             eventBus.broadcast("session:tool_call", {
               id: sessionId,
               tool_call_id: part.toolCallId,
@@ -156,6 +163,7 @@ export class SessionController {
             })
             break
           case "tool-result":
+            console.log(`[agent] tool-result: ${part.toolName} -> ${JSON.stringify(part.output).slice(0, 200)}`)
             eventBus.broadcast("session:tool_call", {
               id: sessionId,
               tool_call_id: part.toolCallId,
@@ -167,10 +175,11 @@ export class SessionController {
         }
       }
 
-      // Stream finished — persist results
+      console.log(`[agent] stream finished, collecting results...`)
       const steps = await result.steps
       const totalUsage = await result.totalUsage
       const responseMessages = (await result.response).messages
+      console.log(`[agent] steps=${steps.length} totalTokens=${totalUsage?.totalTokens ?? 0} responseMessages=${responseMessages.length}`)
 
       const allMessages = [...messages, ...responseMessages]
 
@@ -182,6 +191,7 @@ export class SessionController {
       )
 
       const newStatus: SessionStatus = pendingToolCalls.length > 0 ? "waiting_for_input" : "idle"
+      console.log(`[agent] newStatus=${newStatus} pendingToolCalls=${pendingToolCalls.length}`)
       const now = new Date().toISOString()
 
       this.db.prepare(`
@@ -210,6 +220,7 @@ export class SessionController {
 
       const lastText = steps[steps.length - 1]?.text
       if (lastText) {
+        console.log(`[agent] final text: ${lastText.slice(0, 200)}`)
         eventBus.broadcast("session:message", {
           id: sessionId,
           message: { role: "assistant", content: lastText },
@@ -217,7 +228,7 @@ export class SessionController {
       }
 
     } catch (err) {
-      console.error(`Agent step error (session ${sessionId}):`, err)
+      console.error(`[agent] ERROR in runAgentStep (session ${sessionId}):`, err)
       const now = new Date().toISOString()
       this.db.prepare("UPDATE agent_sessions SET status = 'error', modified_on = ? WHERE _id = ?").run(now, sessionId)
       this.updateStatus(sessionId, "error")

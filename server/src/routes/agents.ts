@@ -39,7 +39,7 @@ export function createAgentRoutes(db: Database.Database): Router {
     const agent = db.prepare("SELECT * FROM agents WHERE _id = ?").get(req.params.id) as AgentRow | undefined
     if (!agent) return res.status(404).json({ error: "Agent not found" })
 
-    const { name, model } = req.body
+    const { name, model, system_prompt } = req.body
     const now = new Date().toISOString()
 
     if (name !== undefined) {
@@ -47,6 +47,14 @@ export function createAgentRoutes(db: Database.Database): Router {
     }
     if (model !== undefined) {
       db.prepare("UPDATE agents SET model = ?, modified_on = ? WHERE _id = ?").run(model, now, req.params.id)
+    }
+    if (system_prompt !== undefined) {
+      db.prepare(
+        "INSERT INTO agent_config_history (agent_id, version, system_prompt, created_on) VALUES (?, ?, ?, ?)"
+      ).run(req.params.id, agent.version, agent.system_prompt, now)
+      db.prepare(
+        "UPDATE agents SET system_prompt = ?, version = version + 1, modified_on = ? WHERE _id = ?"
+      ).run(system_prompt, now, req.params.id)
     }
 
     const updated = db.prepare("SELECT * FROM agents WHERE _id = ?").get(req.params.id)

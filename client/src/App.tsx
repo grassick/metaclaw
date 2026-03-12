@@ -1,65 +1,65 @@
-import { useState } from "react";
-
-type Panel = "chat" | "settings";
+import { useEffect } from "react"
+import { useAppStore } from "./stores/sessionStore"
+import SessionSidebar from "./components/SessionSidebar"
+import ChatPanel from "./components/ChatPanel"
+import SettingsPanel from "./components/SettingsPanel"
 
 export default function App() {
-  const [activePanel, setActivePanel] = useState<Panel>("chat");
+  const loadAgents = useAppStore((s) => s.loadAgents)
+  const loadSessions = useAppStore((s) => s.loadSessions)
+  const initSSE = useAppStore((s) => s.initSSE)
+  const showSettings = useAppStore((s) => s.showSettings)
+  const toggleSettings = useAppStore((s) => s.toggleSettings)
+  const agents = useAppStore((s) => s.agents)
+  const activeAgentId = useAppStore((s) => s.activeAgentId)
+  const setActiveAgent = useAppStore((s) => s.setActiveAgent)
+
+  useEffect(() => {
+    loadAgents()
+    loadSessions()
+    initSSE()
+  }, [loadAgents, loadSessions, initSSE])
 
   return (
     <div className="d-flex flex-column vh-100">
-      {/* Nav */}
-      <nav className="navbar navbar-expand navbar-dark bg-dark px-3">
-        <span className="navbar-brand fw-bold me-4">Metaclaw</span>
-        <div className="navbar-nav">
-          <button
-            className={`btn btn-sm me-2 ${activePanel === "chat" ? "btn-primary" : "btn-outline-secondary"}`}
-            onClick={() => setActivePanel("chat")}
+      {/* Navbar */}
+      <nav className="navbar navbar-expand navbar-dark bg-dark px-3 py-2">
+        <span className="navbar-brand fw-bold me-4 mb-0">Metaclaw</span>
+        {agents.length > 1 && (
+          <select
+            className="form-select form-select-sm bg-dark text-light border-secondary me-3"
+            style={{ width: "auto" }}
+            value={activeAgentId}
+            onChange={(e) => setActiveAgent(e.target.value)}
           >
-            Chat
-          </button>
+            {agents.map((a) => (
+              <option key={a._id} value={a._id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        )}
+        <div className="ms-auto">
           <button
-            className={`btn btn-sm ${activePanel === "settings" ? "btn-primary" : "btn-outline-secondary"}`}
-            onClick={() => setActivePanel("settings")}
+            className="btn btn-sm btn-outline-secondary text-light border-secondary"
+            onClick={toggleSettings}
+            title="Settings"
           >
             ⚙ Settings
           </button>
         </div>
       </nav>
 
-      {/* Active panel */}
-      <main className="flex-grow-1 overflow-hidden">
-        {activePanel === "chat" ? <ChatPanel /> : <SettingsPanel />}
-      </main>
-    </div>
-  );
-}
-
-function ChatPanel() {
-  return (
-    <div className="d-flex flex-column h-100 p-3">
-      <div className="flex-grow-1 border rounded p-3 mb-3 overflow-auto bg-light">
-        <p className="text-muted fst-italic">No messages yet.</p>
+      {/* Main content */}
+      <div className="d-flex flex-grow-1 overflow-hidden">
+        <SessionSidebar />
+        <main className="flex-grow-1 overflow-hidden">
+          <ChatPanel />
+        </main>
       </div>
-      <div className="input-group">
-        <input
-          type="text"
-          className="form-control"
-          placeholder="Send a message…"
-          disabled
-        />
-        <button className="btn btn-primary" disabled>
-          Send
-        </button>
-      </div>
-    </div>
-  );
-}
 
-function SettingsPanel() {
-  return (
-    <div className="p-4">
-      <h5>Settings</h5>
-      <p className="text-muted">System prompt, tools, and state will appear here.</p>
+      {/* Settings drawer */}
+      {showSettings && <SettingsPanel onClose={toggleSettings} />}
     </div>
-  );
+  )
 }
