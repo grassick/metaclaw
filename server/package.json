@@ -4,16 +4,22 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "@openrouter/ai-sdk-provider": "^2.3.0",
+    "ai": "^6.0.116",
+    "better-sqlite3": "^12.6.2",
+    "express": "^4.21.2",
+    "isolated-vm": "^6.1.1",
+    "undici": "^7.23.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.1",
-    "@types/node": "^22.13.5",
+    "@types/node": "^22.19.11",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }
