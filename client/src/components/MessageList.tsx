@@ -67,14 +67,21 @@ function parseMessages(messages: unknown[]): DisplayItem[] {
             items.push({ key: `msg-${idx}-${partIdx}`, type: "assistant-text", content: p.text as string })
           } else if (p.type === "tool-call") {
             const tcId = (p.toolCallId ?? p.id) as string
-            items.push({
-              key: `msg-${idx}-${partIdx}`,
-              type: "tool-call",
-              toolCallId: tcId,
-              toolName: (p.toolName ?? p.name) as string,
-              args: p.args ?? p.input,
-              result: toolResults.get(tcId),
-            })
+            const toolName = (p.toolName ?? p.name) as string
+            const args = (p.args ?? p.input) as Record<string, unknown> | undefined
+
+            if (toolName === "send_message" && args?.text) {
+              items.push({ key: `msg-${idx}-${partIdx}`, type: "assistant-text", content: args.text as string })
+            } else {
+              items.push({
+                key: `msg-${idx}-${partIdx}`,
+                type: "tool-call",
+                toolCallId: tcId,
+                toolName,
+                args,
+                result: toolResults.get(tcId),
+              })
+            }
           }
           partIdx++
         }
@@ -149,24 +156,50 @@ function ToolCallBlock({ item }: { item: DisplayItem }) {
 function StreamingSegments({ segments }: { segments: StreamSegment[] }) {
   return (
     <>
-      {segments.map((seg, i) =>
-        seg.type === "text" ? (
-          <AssistantText key={`stream-${i}`} content={seg.content ?? ""} streaming={i === segments.length - 1} />
-        ) : (
+      {segments.map((seg, i) => {
+        if (seg.type === "text") {
+          return <AssistantText key={`stream-${i}`} content={seg.content ?? ""} streaming={i === segments.length - 1} />
+        }
+
+        if (seg.name === "send_message" && seg.args) {
+          const text = (seg.args as Record<string, unknown>).text as string | undefined
+          if (text) return <AssistantText key={`stream-${i}`} content={text} />
+        }
+
+        const isComplete = seg.status === "complete"
+        return (
           <div key={`stream-${i}`} className="mb-2 ms-2">
-            <div className="tool-call-block">
-              <div className="d-flex align-items-center gap-2 py-1 px-2 small">
-                {seg.status === "complete" ? (
+            <details className="tool-call-block">
+              <summary className="d-flex align-items-center gap-2 py-1 px-2 small">
+                {isComplete ? (
                   <span className="text-success">✓</span>
                 ) : (
                   <span className="spinner-border spinner-border-sm text-primary" />
                 )}
                 <code className="text-muted">{seg.name}</code>
+              </summary>
+              <div className="px-2 pb-2 small">
+                {seg.args != null && (
+                  <div className="mb-1">
+                    <span className="text-muted">Args: </span>
+                    <code className="d-block bg-body-secondary rounded p-1 mt-1" style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
+                      {JSON.stringify(seg.args, null, 2)}
+                    </code>
+                  </div>
+                )}
+                {isComplete && seg.result != null && (
+                  <div>
+                    <span className="text-muted">Result: </span>
+                    <code className="d-block bg-body-secondary rounded p-1 mt-1" style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
+                      {typeof seg.result === "string" ? seg.result : JSON.stringify(seg.result, null, 2)}
+                    </code>
+                  </div>
+                )}
               </div>
-            </div>
+            </details>
           </div>
-        ),
-      )}
+        )
+      })}
     </>
   )
 }

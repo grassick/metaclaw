@@ -88,7 +88,18 @@ export function buildSystemPrompt(db: Database.Database, agent: AgentRow, sessio
     }
   }
 
-  // 10. Session notepad
+  // 10. Built-in guidelines
+  parts.push(`\n\n## Guidelines
+### Loading external data into the database
+When asked to load data from an API or URL into the database:
+1. First, fetch a small sample (1-2 records) with run_sandbox_code to discover the actual field names and types
+2. Design and CREATE TABLE(s) with columns matching the real data structure
+3. Fetch the full dataset and INSERT it — do the fetch + insert together in a single run_sandbox_code call (using db.sql()) so you don't re-transmit large payloads between tool calls
+
+### Sandbox context
+Each run_sandbox_code invocation runs in a fresh isolated context. Variables from one call are not available in the next. Plan accordingly.`)
+
+  // 11. Session notepad
   if (session.notepad) {
     parts.push(`\n\n## Session Notepad\n${session.notepad}`)
   }

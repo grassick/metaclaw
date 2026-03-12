@@ -9,7 +9,7 @@ export function createDatabaseTools(ctx: MetaToolContext) {
 
   return {
     db_sql: tool({
-      description: "Run any SQL against the agent's database. Auto-detects reads vs writes: SELECT/WITH/EXPLAIN/PRAGMA return rows; everything else returns a change count. The agent database is separate from the app — you can create tables, insert data, and query freely.",
+      description: "Run a single SQL statement against the agent's database. Auto-detects reads vs writes: SELECT/WITH/EXPLAIN/PRAGMA return rows; everything else returns a change count. The agent database is separate from the app — you can create tables, insert data, and query freely. Best for schema DDL and simple queries. For bulk inserts of externally-fetched data, prefer run_sandbox_code so you can fetch and insert in a loop without re-transmitting large payloads.",
       inputSchema: z.object({
         sql: z.string().describe("SQL to execute"),
         params: z.array(z.any()).optional().describe("Positional bind parameters for ? placeholders"),
