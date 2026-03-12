@@ -1,9 +1,10 @@
 import { streamText, stepCountIs, type ModelMessage, type ToolResultPart, type ToolSet } from "ai"
 import type Database from "better-sqlite3"
 import type { AgentRow, SessionRow, SessionStatus } from "./types"
-import { createMetaTools } from "./tools"
+import { createAllTools } from "./tools"
 import { buildSystemPrompt } from "./PersonalAgent"
 import { createOpenRouterProvider } from "../openRouterProvider"
+import { getAgentDb } from "../db/init"
 import { eventBus } from "../events"
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
@@ -11,11 +12,13 @@ const MAX_STEPS = 25
 
 export class SessionController {
   private db: Database.Database
+  private openRouterApiKey: string
   private openrouter: ReturnType<typeof createOpenRouterProvider>
   private activeRuns = new Map<string, AbortController>()
 
   constructor(db: Database.Database, openRouterApiKey: string) {
     this.db = db
+    this.openRouterApiKey = openRouterApiKey
     this.openrouter = createOpenRouterProvider(openRouterApiKey)
   }
 
@@ -138,14 +141,16 @@ export class SessionController {
     const modelId = session.model ?? agent.model ?? DEFAULT_MODEL
     const model = this.openrouter(modelId)
 
-    console.log(`[agent] runAgentStep session=${sessionId} model=${modelId} messages=${messages.length} tools=${Object.keys(createMetaTools({ agentId: agent._id, sessionId, db: this.db })).join(",")}`)
-    console.log(`[agent] system prompt length=${systemPrompt.length}`)
-
-    const tools = createMetaTools({
+    const tools = createAllTools({
       agentId: agent._id,
       sessionId,
       db: this.db,
-    }) as ToolSet
+      agentDb: getAgentDb(agent._id),
+      openRouterApiKey: this.openRouterApiKey,
+    })
+
+    console.log(`[agent] runAgentStep session=${sessionId} model=${modelId} messages=${messages.length} tools=${Object.keys(tools).length}`)
+    console.log(`[agent] system prompt length=${systemPrompt.length}`)
 
     const abortController = new AbortController()
     this.activeRuns.set(sessionId, abortController)
@@ -276,6 +281,9 @@ function truncateForSSE(value: unknown): unknown {
 }
 
 function toToolResultOutput(value: unknown): ToolResultPart["output"] {
+  // AI SDK v6 requires output to be an object, not a primitive
+  if (value === null || value === undefined) return { result: null } as any
+  if (typeof value !== "object") return { result: value } as any
   return value as ToolResultPart["output"]
 }
 

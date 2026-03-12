@@ -43,6 +43,21 @@ export interface TaskScope {
   message_index: number
 }
 
+/**
+ * Context passed to all meta-tool factories.
+ * Phase 1 tools use db/agentId/sessionId; Phase 3+ tools also use agentDb and openRouterApiKey.
+ */
+export interface MetaToolContext {
+  agentId: string
+  sessionId: string
+  /** App database (metaclaw.db) */
+  db: Database.Database
+  /** Agent's own data database (agent_data_{id}.db) */
+  agentDb: Database.Database
+  /** OpenRouter API key for LLM calls */
+  openRouterApiKey: string
+}
+
 export interface ToolContext {
   agentId: string
   sessionId: string

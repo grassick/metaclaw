@@ -165,7 +165,7 @@ function AskUserBlock({ pending }: { pending: PendingInput }) {
             <button
               key={opt}
               className="btn btn-outline-primary btn-sm"
-              onClick={() => respondToInput(pending.toolCallId, opt)}
+              onClick={() => respondToInput(pending.toolCallId, { answer: opt })}
             >
               {opt}
             </button>
@@ -185,7 +185,7 @@ function AskUserFreeText({ pending }: { pending: PendingInput }) {
   const submit = () => {
     const val = inputRef.current?.value.trim()
     if (!val) return
-    respondToInput(pending.toolCallId, val)
+    respondToInput(pending.toolCallId, { answer: val })
   }
 
   return (

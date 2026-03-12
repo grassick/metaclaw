@@ -18,6 +18,9 @@ export default function App() {
     loadAgents()
     loadSessions()
     initSSE()
+    return () => {
+      useAppStore.getState().sseClient?.disconnect()
+    }
   }, [loadAgents, loadSessions, initSSE])
 
   return (

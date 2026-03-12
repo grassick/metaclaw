@@ -28,7 +28,7 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() })
 })
 
-app.use("/api/agents", createAgentRoutes(db))
+app.use("/api/agents", createAgentRoutes(db, OPENROUTER_API_KEY))
 app.use("/api/sessions", createSessionRoutes(sessionController))
 app.use("/api/events", createEventRoutes())
 

@@ -184,6 +184,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // ── SSE ──
 
   initSSE() {
+    // Disconnect existing client to prevent duplicates (React StrictMode double-invokes effects)
+    get().sseClient?.disconnect()
     const client = new SSEClient((type, data) => get().handleSSEEvent(type, data))
     client.connect()
     set({ sseClient: client })
@@ -198,7 +200,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (d.id !== activeSessionId) break
         const status = d.status as string
         set({ sessionStatus: status })
-        if (status === "idle" || status === "error" || status === "completed") {
+        if (status === "idle" || status === "error" || status === "completed" || status === "waiting_for_input") {
           get()._refreshMessages()
         }
         break

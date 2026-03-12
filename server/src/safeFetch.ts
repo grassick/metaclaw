@@ -14,7 +14,9 @@ const MAX_REDIRECTS = 10
 const ssrfSafeDispatcher = new Agent({
   connect: {
     lookup: (hostname, options, callback) => {
-      dnsCallback.lookup(hostname, { all: true }, (err, results) => {
+      console.log("[safeFetch] undici lookup request for", hostname, "options=", JSON.stringify(options))
+      dnsCallback.lookup(hostname, { ...options, all: true }, (err, results) => {
+        console.log("[safeFetch] dns.lookup results for", hostname, "err=", err, "results=", JSON.stringify(results))
         if (err) {
           return callback(err, "", 4)
         }
@@ -36,6 +38,11 @@ const ssrfSafeDispatcher = new Agent({
         if (results.length === 0) {
           return callback(new Error(`DNS lookup returned no addresses for ${hostname}`) as NodeJS.ErrnoException, "", 4)
         }
+        if (options.all) {
+          console.log("[safeFetch] calling undici lookup callback with all results=", JSON.stringify(results))
+          return callback(null, results)
+        }
+        console.log("[safeFetch] calling undici lookup callback with address=", results[0].address, "family=", results[0].family)
         callback(null, results[0].address, results[0].family)
       })
     }

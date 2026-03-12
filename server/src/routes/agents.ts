@@ -1,8 +1,9 @@
 import { Router } from "express"
 import type Database from "better-sqlite3"
 import type { AgentRow } from "../agent/types"
+import { executeSandbox } from "../sandbox/SandboxHost"
 
-export function createAgentRoutes(db: Database.Database): Router {
+export function createAgentRoutes(db: Database.Database, openRouterApiKey: string): Router {
   const router = Router()
 
   router.get("/", (_req, res) => {
@@ -67,6 +68,43 @@ export function createAgentRoutes(db: Database.Database): Router {
     }
     const result = db.prepare("DELETE FROM agents WHERE _id = ?").run(req.params.id)
     res.json({ deleted: result.changes > 0 })
+  })
+
+  // ================================================================
+  // Function invocation — POST /agents/:agentId/functions/:name/invoke
+  // Called by UI components via callBackend(). Bypasses the LLM entirely.
+  // ================================================================
+  router.post("/:agentId/functions/:name/invoke", async (req, res) => {
+    const { agentId, name } = req.params
+    const args = req.body ?? {}
+
+    const agent = db.prepare("SELECT 1 FROM agents WHERE _id = ?").get(agentId)
+    if (!agent) return res.status(404).json({ error: "Agent not found" })
+
+    const fnRow = db.prepare(
+      "SELECT code, parameter_schema, enabled FROM agent_functions WHERE _id = ? AND agent_id = ?"
+    ).get(name, agentId) as { code: string; parameter_schema: string; enabled: number } | undefined
+
+    if (!fnRow) return res.status(404).json({ error: `Function '${name}' not found` })
+    if (!fnRow.enabled) return res.status(400).json({ error: `Function '${name}' is disabled` })
+
+    try {
+      const result = await executeSandbox(fnRow.code, {
+        agentId,
+        appDb: db,
+        openRouterApiKey,
+      }, {
+        args,
+      })
+
+      if (result.success) {
+        res.json({ result: result.result, logs: result.logs })
+      } else {
+        res.status(500).json({ error: result.error, logs: result.logs })
+      }
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+    }
   })
 
   return router

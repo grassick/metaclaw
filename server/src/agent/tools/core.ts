@@ -1,24 +1,13 @@
 import { tool } from "ai"
 import { z } from "zod"
-import type Database from "better-sqlite3"
-import type { AgentRow, SessionRow, TaskScope } from "./types"
-import { eventBus } from "../events"
+import type { AgentRow, SessionRow, TaskScope, MetaToolContext } from "../types"
+import { eventBus } from "../../events"
 
 /**
- * Context needed by meta-tools during execution.
- * Passed to createMetaTools so each tool closes over the right session/agent.
- */
-export interface MetaToolContext {
-  agentId: string
-  sessionId: string
-  db: Database.Database
-}
-
-/**
- * Creates all Phase 1 built-in meta-tools.
+ * Phase 1 built-in meta-tools: self-modification, state, notepad, user interaction, task scoping.
  * Tools with `execute` run immediately; tools without (ask_user) pause the agent loop.
  */
-export function createMetaTools(ctx: MetaToolContext) {
+export function createCoreTools(ctx: MetaToolContext) {
   const { agentId, sessionId, db } = ctx
 
   return {
@@ -78,7 +67,6 @@ export function createMetaTools(ctx: MetaToolContext) {
 
         const newVersion = row.version + 1
 
-        // Save history for rollback
         db.prepare(
           "INSERT INTO agent_config_history (agent_id, version, system_prompt, created_on) VALUES (?, ?, ?, ?)"
         ).run(agentId, row.version, row.system_prompt, now)
@@ -226,7 +214,6 @@ export function createMetaTools(ctx: MetaToolContext) {
         question: z.string().describe("The question to ask"),
         options: z.array(z.string()).optional().describe("Optional list of choices. If provided, renders as buttons instead of free-text input."),
       }),
-      // No execute — this is a pausing tool. The SDK stops the loop here.
     }),
 
     send_message: tool({
@@ -286,8 +273,6 @@ export function createMetaTools(ctx: MetaToolContext) {
         db.prepare("UPDATE agent_sessions SET task_stack = ?, modified_on = ? WHERE _id = ?")
           .run(JSON.stringify(stack), new Date().toISOString(), sessionId)
 
-        // Actual message collapsing will be applied when loading messages for the next LLM call.
-        // For now, we record the scope end and summary.
         return { ok: true, messages_collapsed: 0, task_id: scope.task_id, summary }
       },
     }),

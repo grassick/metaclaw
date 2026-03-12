@@ -157,7 +157,17 @@ export async function executeScript(
         }
       }
 
-      const response = await fetchToUse(url, fetchOptions)
+      let response: Response
+      try {
+        response = await fetchToUse(url, fetchOptions)
+      } catch (err) {
+        // Flatten cause into the message so it survives the isolate boundary
+        const msg = err instanceof Error ? err.message : String(err)
+        const cause = err instanceof Error && err.cause instanceof Error
+          ? err.cause.message
+          : undefined
+        throw new Error(cause ? `${msg}: ${cause}` : msg)
+      }
       const bodyText = await response.text()
 
       // Check response size
