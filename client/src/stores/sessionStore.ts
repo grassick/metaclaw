@@ -47,6 +47,7 @@ interface AppStore {
   // Actions
   sendMessage: (content: string) => Promise<void>
   respondToInput: (toolCallId: string, result: unknown) => Promise<void>
+  cancelSession: () => Promise<void>
 
   // UI
   showSettings: boolean
@@ -166,6 +167,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({ pendingInput: null, sessionStatus: "running", streamSegments: [] })
     await api.sendToolResponse(activeSessionId, toolCallId, result)
+  },
+
+  async cancelSession() {
+    const { activeSessionId } = get()
+    if (!activeSessionId) return
+    await api.cancelSession(activeSessionId)
   },
 
   // ── UI ──

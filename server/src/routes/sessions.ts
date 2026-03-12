@@ -56,6 +56,12 @@ export function createSessionRoutes(controller: SessionController): Router {
     }
   })
 
+  // Cancel a running session (stops the agent loop gracefully)
+  router.post("/:id/cancel", (req, res) => {
+    const cancelled = controller.cancelSession(req.params.id)
+    res.json({ cancelled })
+  })
+
   // Get message history for a session
   router.get("/:id/messages", (req, res) => {
     const session = controller.getSession(req.params.id)

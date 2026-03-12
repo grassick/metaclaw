@@ -30,39 +30,34 @@ export default function SessionSidebar() {
   const deleteSession = useAppStore((s) => s.deleteSession)
 
   return (
-    <div className="d-flex flex-column h-100 bg-body-tertiary" style={{ width: 260, minWidth: 260 }}>
+    <div className="d-flex flex-column h-100 bg-body-tertiary sidebar">
       <div className="p-2 border-bottom">
         <button className="btn btn-primary btn-sm w-100" onClick={createSession}>
           + New Session
         </button>
       </div>
 
-      <div className="flex-grow-1 overflow-auto">
+      <div className="flex-grow-1 overflow-y-auto overflow-x-hidden">
         {sessions.length === 0 && (
           <p className="text-muted small p-3 mb-0">No sessions yet</p>
         )}
         {sessions.map((s) => (
           <div
             key={s._id}
-            className={`d-flex align-items-center px-3 py-2 border-bottom cursor-pointer ${
-              s._id === activeSessionId ? "bg-primary-subtle" : "hover-bg"
-            }`}
-            style={{ cursor: "pointer" }}
+            className={`sidebar-item border-bottom ${s._id === activeSessionId ? "active" : ""}`}
             onClick={() => selectSession(s._id)}
           >
-            <span className={`me-2 ${STATUS_DOTS[s.status] ?? "text-secondary"}`} style={{ fontSize: "0.5rem" }}>
-              ●
-            </span>
-            <div className="flex-grow-1 min-w-0">
-              <div className="text-truncate small fw-medium">
+            <span className={`sidebar-dot ${STATUS_DOTS[s.status] ?? "text-secondary"}`}>●</span>
+            <div className="sidebar-item-text">
+              <div className="sidebar-title small">
                 {s.title || "New session"}
               </div>
-              <div className="text-muted" style={{ fontSize: "0.7rem" }}>
+              <div className="text-muted sidebar-time">
                 {formatTime(s.modified_on)}
               </div>
             </div>
             <button
-              className="btn btn-sm p-0 ms-1 text-muted opacity-0-hover"
+              className="btn btn-sm p-0 text-muted sidebar-delete"
               title="Delete session"
               onClick={(e) => {
                 e.stopPropagation()

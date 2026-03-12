@@ -12,6 +12,7 @@ const MAX_STEPS = 25
 export class SessionController {
   private db: Database.Database
   private openrouter: ReturnType<typeof createOpenRouterProvider>
+  private activeRuns = new Map<string, AbortController>()
 
   constructor(db: Database.Database, openRouterApiKey: string) {
     this.db = db
@@ -49,9 +50,19 @@ export class SessionController {
   deleteSession(sessionId: string): boolean {
     const result = this.db.prepare("DELETE FROM agent_sessions WHERE _id = ?").run(sessionId)
     if (result.changes > 0) {
+      this.activeRuns.get(sessionId)?.abort()
+      this.activeRuns.delete(sessionId)
       eventBus.broadcast("sessions:list", { action: "deleted", id: sessionId })
     }
     return result.changes > 0
+  }
+
+  cancelSession(sessionId: string): boolean {
+    const controller = this.activeRuns.get(sessionId)
+    if (!controller) return false
+    console.log(`[agent] cancelSession session=${sessionId}`)
+    controller.abort()
+    return true
   }
 
   // ================================================================
@@ -136,6 +147,9 @@ export class SessionController {
       db: this.db,
     }) as ToolSet
 
+    const abortController = new AbortController()
+    this.activeRuns.set(sessionId, abortController)
+
     try {
       console.log(`[agent] calling streamText...`)
       const result = streamText({
@@ -144,6 +158,7 @@ export class SessionController {
         messages,
         tools,
         stopWhen: stepCountIs(MAX_STEPS),
+        abortSignal: abortController.signal,
       })
 
       console.log(`[agent] iterating fullStream...`)
@@ -228,14 +243,24 @@ export class SessionController {
       }
 
     } catch (err) {
-      console.error(`[agent] ERROR in runAgentStep (session ${sessionId}):`, err)
-      const now = new Date().toISOString()
-      this.db.prepare("UPDATE agent_sessions SET status = 'error', modified_on = ? WHERE _id = ?").run(now, sessionId)
-      this.updateStatus(sessionId, "error")
-      eventBus.broadcast("session:message", {
-        id: sessionId,
-        message: { role: "assistant", content: `Error: ${err instanceof Error ? err.message : String(err)}` },
-      })
+      if (isAbortError(err)) {
+        console.log(`[agent] cancelled session=${sessionId}`)
+        const now = new Date().toISOString()
+        this.db.prepare("UPDATE agent_sessions SET status = 'idle', pending_tool_calls = NULL, modified_on = ? WHERE _id = ?")
+          .run(now, sessionId)
+        this.updateStatus(sessionId, "idle")
+      } else {
+        console.error(`[agent] ERROR in runAgentStep (session ${sessionId}):`, err)
+        const now = new Date().toISOString()
+        this.db.prepare("UPDATE agent_sessions SET status = 'error', modified_on = ? WHERE _id = ?").run(now, sessionId)
+        this.updateStatus(sessionId, "error")
+        eventBus.broadcast("session:message", {
+          id: sessionId,
+          message: { role: "assistant", content: `Error: ${err instanceof Error ? err.message : String(err)}` },
+        })
+      }
+    } finally {
+      this.activeRuns.delete(sessionId)
     }
   }
 
@@ -252,4 +277,11 @@ function truncateForSSE(value: unknown): unknown {
 
 function toToolResultOutput(value: unknown): ToolResultPart["output"] {
   return value as ToolResultPart["output"]
+}
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true
+  if (err instanceof Error && err.name === "AbortError") return true
+  if (err instanceof Error && err.message?.includes("aborted")) return true
+  return false
 }

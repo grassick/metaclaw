@@ -82,6 +82,8 @@ export const api = {
       tool_call_id: toolCallId,
       result,
     }),
+  cancelSession: (sessionId: string) =>
+    post<{ cancelled: boolean }>(`${BASE}/sessions/${sessionId}/cancel`, {}),
 
   // State
   listState: (agentId = "default") => request<StateEntry[]>(`${BASE}/state?agent_id=${agentId}`),

@@ -1,10 +1,69 @@
+/* ── Sidebar ──────────────────────────────────────────────────────── */
+
+.sidebar {
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+}
+
+.sidebar-item {
+  display: grid;
+  grid-template-columns: 10px 1fr 20px;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  cursor: pointer;
+  transition: background 0.1s;
+  overflow: hidden;
+}
+.sidebar-item:hover {
+  background: var(--bs-tertiary-bg);
+}
+.sidebar-item.active {
+  background: var(--bs-secondary-bg);
+}
+
+.sidebar-dot {
+  font-size: 0.4rem;
+  line-height: 1;
+  justify-self: center;
+}
+
+.sidebar-item-text {
+  min-width: 0;
+}
+
+.sidebar-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-time {
+  font-size: 0.68rem;
+  opacity: 0.55;
+}
+
+.sidebar-delete {
+  font-size: 0.7rem;
+  line-height: 1;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+  justify-self: center;
+}
+.sidebar-item:hover .sidebar-delete {
+  opacity: 0.6;
+}
+.sidebar-delete:hover {
+  opacity: 1 !important;
+}
+
 /* ── Streaming cursor ──────────────────────────────────────────────── */
 
 .streaming-cursor {
   display: inline-block;
   animation: blink 0.8s step-end infinite;
   color: var(--bs-primary);
-  font-weight: bold;
 }
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -20,14 +79,17 @@
   margin-bottom: 0;
 }
 .assistant-message pre {
-  background: var(--bs-body-secondary-bg, #f8f9fa);
+  background: var(--bs-secondary-bg);
   border-radius: 0.375rem;
   padding: 0.75rem;
   overflow-x: auto;
   font-size: 0.8125rem;
 }
-.assistant-message code {
-  font-size: 0.8125rem;
+.assistant-message code:not(pre code) {
+  background: var(--bs-secondary-bg);
+  padding: 0.1em 0.3em;
+  border-radius: 0.2em;
+  font-size: 0.85em;
 }
 .assistant-message table {
   width: 100%;
@@ -41,7 +103,8 @@
   font-size: 0.875rem;
 }
 .assistant-message th {
-  background: var(--bs-body-secondary-bg, #f8f9fa);
+  background: var(--bs-secondary-bg);
+  font-weight: 500;
 }
 
 /* ── Tool call blocks ─────────────────────────────────────────────── */
@@ -49,7 +112,8 @@
 .tool-call-block {
   border: 1px solid var(--bs-border-color);
   border-radius: 0.375rem;
-  background: var(--bs-body-secondary-bg, #f8f9fa);
+  background: var(--bs-secondary-bg);
+  font-size: 0.8125rem;
 }
 .tool-call-block summary {
   cursor: pointer;
@@ -63,10 +127,17 @@
 /* ── Ask-user block ───────────────────────────────────────────────── */
 
 .ask-user-block {
-  border: 2px solid var(--bs-warning);
+  border: 1px solid var(--bs-warning-border-subtle);
   border-radius: 0.5rem;
   padding: 1rem;
-  background: var(--bs-warning-bg-subtle, #fff3cd);
+  background: var(--bs-warning-bg-subtle);
+  color: var(--bs-warning-text-emphasis);
+}
+
+/* ── Cancel / Stop button ─────────────────────────────────────────── */
+
+.btn-cancel {
+  min-width: 60px;
 }
 
 /* ── Settings drawer overlay ──────────────────────────────────────── */
@@ -75,7 +146,7 @@
   position: fixed;
   inset: 0;
   z-index: 1050;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   justify-content: flex-end;
 }
@@ -85,25 +156,5 @@
   background: var(--bs-body-bg);
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
-}
-
-/* ── Sidebar hover effects ────────────────────────────────────────── */
-
-.hover-bg:hover {
-  background: var(--bs-primary-bg-subtle, #e7f1ff);
-}
-
-/* Delete button visibility on hover */
-.hover-bg .opacity-0-hover,
-.bg-primary-subtle .opacity-0-hover {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.hover-bg:hover .opacity-0-hover,
-.bg-primary-subtle:hover .opacity-0-hover {
-  opacity: 0.6;
-}
-.opacity-0-hover:hover {
-  opacity: 1 !important;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
 }

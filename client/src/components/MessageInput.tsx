@@ -3,11 +3,13 @@ import { useAppStore } from "../stores/sessionStore"
 
 export default function MessageInput() {
   const sendMessage = useAppStore((s) => s.sendMessage)
+  const cancelSession = useAppStore((s) => s.cancelSession)
   const sessionStatus = useAppStore((s) => s.sessionStatus)
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const canSend = activeSessionId && sessionStatus !== "running"
+  const isRunning = sessionStatus === "running"
+  const canSend = activeSessionId && !isRunning
 
   const handleSend = () => {
     const text = textareaRef.current?.value.trim()
@@ -18,7 +20,7 @@ export default function MessageInput() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       handleSend()
     }
@@ -37,16 +39,22 @@ export default function MessageInput() {
         <textarea
           ref={textareaRef}
           className="form-control"
-          placeholder={canSend ? "Send a message… (Enter to send, Shift+Enter for newline)" : ""}
+          placeholder={canSend ? "Send a message… (Ctrl+Enter to send)" : ""}
           rows={1}
           disabled={!canSend}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           style={{ resize: "none", maxHeight: 160 }}
         />
-        <button className="btn btn-primary" onClick={handleSend} disabled={!canSend}>
-          Send
-        </button>
+        {isRunning && activeSessionId ? (
+          <button className="btn btn-outline-danger btn-cancel" onClick={cancelSession}>
+            Stop
+          </button>
+        ) : (
+          <button className="btn btn-primary" onClick={handleSend} disabled={!canSend}>
+            Send
+          </button>
+        )}
       </div>
     </div>
   )
