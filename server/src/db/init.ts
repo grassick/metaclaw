@@ -197,6 +197,14 @@ function initSchema(db: Database.Database) {
       modified_on TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS agent_session_scratch (
+      session_id TEXT NOT NULL REFERENCES agent_sessions(_id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      modified_on TEXT NOT NULL,
+      PRIMARY KEY (session_id, key)
+    );
+
     CREATE TABLE IF NOT EXISTS agent_config_history (
       _id INTEGER PRIMARY KEY AUTOINCREMENT,
       agent_id TEXT NOT NULL REFERENCES agents(_id) ON DELETE CASCADE,

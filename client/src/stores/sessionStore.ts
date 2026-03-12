@@ -21,6 +21,25 @@ export interface PendingInput {
   options?: string[]
 }
 
+function getPendingInput(session: Session): PendingInput | null {
+  if (session.status !== "waiting_for_input" || !session.pending_tool_calls) return null
+
+  const pending = JSON.parse(session.pending_tool_calls) as Array<{
+    toolCallId: string
+    toolName: string
+    input: { question?: string; options?: string[] }
+  }>
+  const askCall = pending.find((tc) => tc.toolName === "ask_user")
+  if (!askCall) return null
+
+  return {
+    toolCallId: askCall.toolCallId,
+    name: askCall.toolName,
+    question: askCall.input.question ?? "Please respond:",
+    options: askCall.input.options,
+  }
+}
+
 // ── Store shape ──────────────────────────────────────────────────────
 
 interface AppStore {
@@ -55,10 +74,16 @@ interface AppStore {
 
   // SSE
   sseClient: SSEClient | null
+  sseConnected: boolean
+  fallbackPollId: number | null
   initSSE: () => void
   handleSSEEvent: (type: string, data: unknown) => void
+  setSSEConnected: (connected: boolean) => void
 
   // Internal
+  _startFallbackPolling: () => void
+  _stopFallbackPolling: () => void
+  _syncActiveSession: () => Promise<void>
   _refreshMessages: () => Promise<void>
   _refreshSessions: () => Promise<void>
 }
@@ -76,6 +101,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sessionStatus: "idle",
   showSettings: false,
   sseClient: null,
+  sseConnected: false,
+  fallbackPollId: null,
 
   // ── Agents ──
 
@@ -99,30 +126,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   async selectSession(id: string | null) {
     if (!id) {
+      get()._stopFallbackPolling()
       set({ activeSessionId: null, messages: [], streamSegments: [], pendingInput: null, sessionStatus: "idle" })
       return
     }
     set({ activeSessionId: id, messages: [], streamSegments: [], pendingInput: null })
     try {
       const [messages, session] = await Promise.all([api.getMessages(id), api.getSession(id)])
-      let pendingInput: PendingInput | null = null
-      if (session.status === "waiting_for_input" && session.pending_tool_calls) {
-        const pending = JSON.parse(session.pending_tool_calls) as Array<{
-          toolCallId: string
-          toolName: string
-          input: { question?: string; options?: string[] }
-        }>
-        const askCall = pending.find((tc) => tc.toolName === "ask_user")
-        if (askCall) {
-          pendingInput = {
-            toolCallId: askCall.toolCallId,
-            name: askCall.toolName,
-            question: askCall.input.question ?? "Please respond:",
-            options: askCall.input.options,
-          }
-        }
-      }
+      const pendingInput = getPendingInput(session)
       set({ messages, sessionStatus: session.status, pendingInput })
+      if (session.status === "running") {
+        get()._startFallbackPolling()
+      } else {
+        get()._stopFallbackPolling()
+      }
     } catch (err) {
       console.error("Failed to load session:", err)
     }
@@ -157,6 +174,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       pendingInput: null,
       sessionStatus: "running",
     }))
+    get()._startFallbackPolling()
 
     await api.sendMessage(activeSessionId, content)
   },
@@ -166,6 +184,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!activeSessionId) return
 
     set({ pendingInput: null, sessionStatus: "running", streamSegments: [] })
+    get()._startFallbackPolling()
     await api.sendToolResponse(activeSessionId, toolCallId, result)
   },
 
@@ -186,9 +205,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
   initSSE() {
     // Disconnect existing client to prevent duplicates (React StrictMode double-invokes effects)
     get().sseClient?.disconnect()
-    const client = new SSEClient((type, data) => get().handleSSEEvent(type, data))
+    const client = new SSEClient(
+      (type, data) => get().handleSSEEvent(type, data),
+      (connected) => get().setSSEConnected(connected),
+    )
     client.connect()
     set({ sseClient: client })
+  },
+
+  setSSEConnected(connected: boolean) {
+    const { sseConnected, sessionStatus } = get()
+    if (sseConnected === connected) return
+
+    set({ sseConnected: connected })
+
+    if (connected) {
+      console.info("SSE connected")
+      return
+    }
+
+    console.warn("SSE disconnected")
+    if (sessionStatus === "running") {
+      console.warn("SSE disconnected during active run; polling will keep the session in sync")
+      get()._startFallbackPolling()
+    }
   },
 
   handleSSEEvent(type: string, data: unknown) {
@@ -200,6 +240,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (d.id !== activeSessionId) break
         const status = d.status as string
         set({ sessionStatus: status })
+        if (status === "running") {
+          get()._startFallbackPolling()
+        } else {
+          get()._stopFallbackPolling()
+        }
         if (status === "idle" || status === "error" || status === "completed" || status === "waiting_for_input") {
           get()._refreshMessages()
         }
@@ -256,11 +301,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
           },
           sessionStatus: "waiting_for_input",
         })
+        get()._stopFallbackPolling()
         break
       }
 
       case "session:message": {
-        // A complete message arrived — will be picked up on _refreshMessages
+        if (d.id !== activeSessionId) break
+        set((s) => ({
+          messages: [...s.messages, d.message],
+          streamSegments: [],
+        }))
         break
       }
 
@@ -279,15 +329,59 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // ── Internal ──
 
-  async _refreshMessages() {
+  _startFallbackPolling() {
+    if (get().fallbackPollId != null) return
+
+    const pollId = window.setInterval(() => {
+      const { activeSessionId, sessionStatus } = get()
+      if (!activeSessionId || sessionStatus !== "running") {
+        get()._stopFallbackPolling()
+        return
+      }
+
+      void get()._syncActiveSession()
+    }, 1000)
+
+    set({ fallbackPollId: pollId })
+  },
+
+  _stopFallbackPolling() {
+    const { fallbackPollId } = get()
+    if (fallbackPollId == null) return
+    window.clearInterval(fallbackPollId)
+    set({ fallbackPollId: null })
+  },
+
+  async _syncActiveSession() {
     const { activeSessionId } = get()
     if (!activeSessionId) return
+
     try {
-      const messages = await api.getMessages(activeSessionId)
-      set({ messages, streamSegments: [] })
+      const [messages, session] = await Promise.all([
+        api.getMessages(activeSessionId),
+        api.getSession(activeSessionId),
+      ])
+      if (get().activeSessionId !== activeSessionId) return
+
+      set({
+        messages,
+        sessionStatus: session.status,
+        pendingInput: getPendingInput(session),
+        streamSegments: session.status === "running" ? get().streamSegments : [],
+      })
+
+      if (session.status === "running") {
+        get()._startFallbackPolling()
+      } else {
+        get()._stopFallbackPolling()
+      }
     } catch {
       // session may have been deleted
     }
+  },
+
+  async _refreshMessages() {
+    await get()._syncActiveSession()
   },
 
   async _refreshSessions() {

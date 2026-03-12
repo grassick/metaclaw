@@ -301,6 +301,46 @@ function buildGlobalFunctions(
       ).run(updated, new Date().toISOString(), sid)
       return null
     }
+
+    // ====================================================================
+    // session.scratch.* (session-scoped structured scratch storage)
+    // ====================================================================
+    fns._api_scratch_get = async (key: string) => {
+      const row = ctx.appDb.prepare(
+        "SELECT value FROM agent_session_scratch WHERE session_id = ? AND key = ?"
+      ).get(sid, key) as { value: string } | undefined
+      return row ? JSON.parse(row.value) : null
+    }
+
+    fns._api_scratch_set = async (key: string, value: any) => {
+      const now = new Date().toISOString()
+      const json = JSON.stringify(value)
+      ctx.appDb.prepare(
+        "INSERT INTO agent_session_scratch (session_id, key, value, modified_on) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, key) DO UPDATE SET value = ?, modified_on = ?"
+      ).run(sid, key, json, now, json, now)
+      return null
+    }
+
+    fns._api_scratch_delete = async (key: string) => {
+      const result = ctx.appDb.prepare(
+        "DELETE FROM agent_session_scratch WHERE session_id = ? AND key = ?"
+      ).run(sid, key)
+      return result.changes > 0
+    }
+
+    fns._api_scratch_keys = async (prefix?: string) => {
+      let rows: { key: string }[]
+      if (prefix) {
+        rows = ctx.appDb.prepare(
+          "SELECT key FROM agent_session_scratch WHERE session_id = ? AND key LIKE ?"
+        ).all(sid, prefix + "%") as { key: string }[]
+      } else {
+        rows = ctx.appDb.prepare(
+          "SELECT key FROM agent_session_scratch WHERE session_id = ?"
+        ).all(sid) as { key: string }[]
+      }
+      return rows.map(r => r.key)
+    }
   }
 
   return fns
@@ -366,6 +406,12 @@ const session = {
     read: async () => _api_notepad_readAsync(),
     write: async (content) => { await _api_notepad_writeAsync(content); },
     append: async (text) => { await _api_notepad_appendAsync(text); },
+  },
+  scratch: {
+    get: async (key) => _api_scratch_getAsync(key),
+    set: async (key, value) => { await _api_scratch_setAsync(key, value); },
+    delete: async (key) => _api_scratch_deleteAsync(key),
+    keys: async (prefix) => _api_scratch_keysAsync(prefix),
   },
 };
 `

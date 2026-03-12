@@ -90,14 +90,23 @@ export function buildSystemPrompt(db: Database.Database, agent: AgentRow, sessio
 
   // 10. Built-in guidelines
   parts.push(`\n\n## Guidelines
-### Loading external data into the database
-When asked to load data from an API or URL into the database:
+### Temporary vs. durable data
+- Use \`session.scratch\` for temporary structured data needed only during this session (fetched API payloads, parsed CSVs, intermediate results). It persists across sandbox calls but is automatically deleted when the session ends.
+- Use the agent database (\`db.sql()\`) for durable records, reusable datasets, or app-backed tables that should survive across sessions.
+- Use the session notepad for human-readable plans and findings, not large structured payloads.
+
+### Loading external data
+When asked to pull and analyze external data for the current task:
+1. Fetch the data with run_sandbox_code and store it in \`session.scratch\`
+2. Use subsequent run_sandbox_code calls to query/transform the scratch data as needed
+
+When the data should be kept permanently (e.g. for a UI component or cross-session reference):
 1. First, fetch a small sample (1-2 records) with run_sandbox_code to discover the actual field names and types
 2. Design and CREATE TABLE(s) with columns matching the real data structure
 3. Fetch the full dataset and INSERT it — do the fetch + insert together in a single run_sandbox_code call (using db.sql()) so you don't re-transmit large payloads between tool calls
 
 ### Sandbox context
-Each run_sandbox_code invocation runs in a fresh isolated context. Variables from one call are not available in the next. Plan accordingly.`)
+Each run_sandbox_code invocation runs in a fresh isolated context. Local variables do not persist between calls. Use \`session.scratch\` to carry structured data across calls within the current session.`)
 
   // 11. Session notepad
   if (session.notepad) {

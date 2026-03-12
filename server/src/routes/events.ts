@@ -12,7 +12,7 @@ export function createEventRoutes(): Router {
     })
     res.write("\n")
 
-    const client = { id: crypto.randomUUID(), res }
+    const client = { id: crypto.randomUUID(), res, remoteAddress: req.ip }
     eventBus.addSSEClient(client)
 
     // Send a heartbeat every 30s to keep the connection alive

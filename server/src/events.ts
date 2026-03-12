@@ -4,6 +4,7 @@ import type { Response } from "express"
 interface SSEClient {
   id: string
   res: Response
+  remoteAddress?: string
 }
 
 class AppEventBus extends EventEmitter {
@@ -11,12 +12,12 @@ class AppEventBus extends EventEmitter {
 
   addSSEClient(client: SSEClient) {
     this.sseClients.add(client)
-    console.log(`[sse] client connected (${this.sseClients.size} total)`)
+    console.log(`[sse] client connected id=${client.id} ip=${client.remoteAddress ?? "unknown"} (${this.sseClients.size} total)`)
   }
 
   removeSSEClient(client: SSEClient) {
     this.sseClients.delete(client)
-    console.log(`[sse] client disconnected (${this.sseClients.size} total)`)
+    console.log(`[sse] client disconnected id=${client.id} ip=${client.remoteAddress ?? "unknown"} (${this.sseClients.size} total)`)
   }
 
   broadcast(eventType: string, data: unknown) {
