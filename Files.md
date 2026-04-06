@@ -546,8 +546,7 @@ The file scope context (current session ID) is injected into the sandbox at crea
 | Package | Purpose | License |
 |---|---|---|
 | **exceljs** | Spreadsheet read/write with formatting and formulas | MIT |
-| **pdfjs-dist** | PDF text extraction and page rendering (Mozilla's PDF.js for Node) | Apache 2.0 |
-| **canvas** | Node canvas for pdfjs-dist page rendering (`pdf.pageToImage`) | MIT |
+| **pdfjs-dist** | PDF text extraction (Mozilla's PDF.js for Node) | Apache 2.0 |
 | **pdf-lib** | PDF creation and editing (add pages, text, images, fill forms, merge) | MIT |
 | **sharp** | Image resize, crop, convert | Apache 2.0 |
 | **file-type** | MIME detection via magic bytes | MIT |

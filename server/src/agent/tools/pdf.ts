@@ -465,33 +465,42 @@ function updateFileSize(db: any, row: FileRow, newSize: number) {
 }
 
 /**
- * Render a single PDF page to PNG using pdfjs-dist + node-canvas.
+ * Render a single PDF page to PNG using pdftoppm (Poppler).
+ * No native Node addons required — just shells out to the system binary.
  */
 export async function renderPdfPageToPng(diskPath: string, pageNum: number, dpi: number): Promise<Buffer> {
-  const pdfjs = await loadPdfJs()
-  const data = new Uint8Array(fs.readFileSync(diskPath))
-  const doc = await pdfjs.getDocument({ data, useSystemFonts: true }).promise
+  const { execFile } = await import("node:child_process")
+  const { promisify } = await import("node:util")
+  const execFileAsync = promisify(execFile)
 
-  if (pageNum < 1 || pageNum > doc.numPages) {
-    doc.destroy()
-    throw new Error(`Page ${pageNum} out of range (1-${doc.numPages})`)
+  const tmpDir = path.join(path.dirname(diskPath), ".tmp_render")
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
+
+  const outPrefix = path.join(tmpDir, `page_${Date.now()}`)
+
+  try {
+    await execFileAsync("pdftoppm", [
+      "-png",
+      "-r", String(dpi),
+      "-f", String(pageNum),
+      "-l", String(pageNum),
+      "-singlefile",
+      diskPath,
+      outPrefix,
+    ], { timeout: 30_000 })
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      throw new Error("pdftoppm not found — install poppler-utils (apt install poppler-utils)")
+    }
+    throw new Error(`pdftoppm failed: ${err.stderr || err.message}`)
   }
 
-  const page = await doc.getPage(pageNum)
-  const scale = dpi / 72
-  const viewport = page.getViewport({ scale })
+  const outFile = outPrefix + ".png"
+  if (!fs.existsSync(outFile)) {
+    throw new Error(`pdftoppm produced no output — page ${pageNum} may be out of range`)
+  }
 
-  const { createCanvas } = await import("canvas")
-  const nodeCanvas = createCanvas(viewport.width, viewport.height)
-  const context = nodeCanvas.getContext("2d")
-
-  await page.render({
-    canvas: nodeCanvas as any,
-    canvasContext: context as any,
-    viewport,
-  }).promise
-
-  const pngBuffer = nodeCanvas.toBuffer("image/png")
-  doc.destroy()
+  const pngBuffer = fs.readFileSync(outFile)
+  fs.unlinkSync(outFile)
   return pngBuffer
 }
