@@ -25,24 +25,26 @@ fetch(url: string, options?: FetchOptions): Promise<FetchResponse>
 web.search(query: string, options?: SearchOptions): Promise<SearchResults>
 web.read(url: string, options?: ReadOptions): Promise<PageContent>
 
-// Key-value state
-state.get(key: string): Promise<any | null>
-state.set(key: string, value: any): Promise<void>
-state.delete(key: string): Promise<boolean>
-state.keys(prefix?: string): Promise<string[]>
+// Key-value state (agent-global or project-scoped)
+state.get(key: string, options?: { project?: boolean }): Promise<any | null>
+state.set(key: string, value: any, options?: { project?: boolean }): Promise<void>
+state.delete(key: string, options?: { project?: boolean }): Promise<boolean>
+state.keys(prefix?: string, options?: { project?: boolean }): Promise<string[]>
 
 // Database (agent's own SQLite DB)
 db.sql(sql: string, params?: any[]): Promise<QueryResult | WriteResult>
 db.schema(): Promise<SchemaResult>
 
-// Files (see Files.md)
+// Files (see Files.md) — scoped to session + project + agent-global
 files.list(pattern?: string): Promise<FileInfo[]>
 files.info(id: string): Promise<FileInfo>
-files.create(name: string, mime?: string): Promise<{ id: string, name: string }>
+files.create(path: string, mime?: string): Promise<{ id: string, path: string }>
 files.delete(id: string): Promise<void>
-files.copy(id: string, newName: string): Promise<{ id: string, name: string }>
-files.rename(id: string, newName: string): Promise<void>
+files.copy(id: string, newPath: string): Promise<{ id: string, path: string }>
+files.rename(id: string, newPath: string): Promise<void>
 files.download(url: string, filename?: string): Promise<FileInfo>
+files.promote(id: string, targetScope: 'project' | 'agent'): Promise<void>
+files.search(pattern: string, options?: { glob?: string, scope?: string }): Promise<SearchResult>
 files.readText(id: string, options?: { startLine?: number, endLine?: number }): Promise<{ content: string, totalLines: number }>
 files.writeText(id: string, content: string): Promise<void>
 files.replaceLines(id: string, startLine: number, endLine: number, newContent: string): Promise<void>
@@ -56,6 +58,10 @@ files.appendBytes(id: string, base64data: string): Promise<void>
 files.spreadsheet.*  // ExcelJS-backed spreadsheet operations
 files.pdf.*          // pdf-lib + pdfjs-dist PDF operations
 files.image.*        // sharp-backed image operations
+
+// Project (read-only info about current project context)
+project.current(): Promise<{ id: string, name: string, display_name: string, description: string } | null>
+project.context(): Promise<string | null>
 
 // Functions (call agent-created backend functions — see Built-in Tools.md)
 functions.call(name: string, args?: object): Promise<any>
@@ -144,14 +150,14 @@ interface FetchResponse {
 
 ### `state`
 
-Direct access to the `agent_state` key-value store. Same data the meta-tools `get_state`/`set_state` operate on.
+Direct access to the `agent_state` key-value store. Same data the meta-tools `get_state`/`set_state` operate on. All methods accept an optional `options` parameter with `{ project: boolean }` — when `true` and the session belongs to a project, operates on project-scoped state instead of agent-global state.
 
 | Method | Description |
 |--------|-------------|
-| `state.get(key)` | Returns the value or `null` |
-| `state.set(key, value)` | Upserts a JSON value |
-| `state.delete(key)` | Returns `true` if the key existed |
-| `state.keys(prefix?)` | Lists keys, optionally filtered by prefix |
+| `state.get(key, options?)` | Returns the value or `null`. `{ project: true }` reads project-scoped state. |
+| `state.set(key, value, options?)` | Upserts a JSON value. `{ project: true }` writes project-scoped state. |
+| `state.delete(key, options?)` | Returns `true` if the key existed. `{ project: true }` deletes project-scoped state. |
+| `state.keys(prefix?, options?)` | Lists keys, optionally filtered by prefix. `{ project: true }` lists project-scoped keys. |
 
 ### `db`
 
@@ -276,6 +282,25 @@ web.read(url: string, options?: {
 File management, text access, and format-specific APIs. All operations run on the server — the sandbox gets proxy stubs. See [Files](./Files.md) for the full API reference.
 
 Generic and text operations are on `files.*` directly. Format-specific APIs are sub-namespaces: `files.spreadsheet.*`, `files.pdf.*`, `files.image.*`.
+
+All listing and creation operations respect the current session's file scope — the sandbox sees session-scoped files + project-scoped files (if in a project) + agent-global files. The file scope context (current session ID, project ID) is injected at sandbox creation time.
+
+Key changes from unscoped files:
+- `files.create(path, mime?)` — first parameter is `path` (e.g. `"output/summary.xlsx"`), not a flat name
+- `files.copy(id, newPath)` / `files.rename(id, newPath)` — operate on paths
+- `files.promote(id, targetScope)` — promote a file's scope upward (`'project'` or `'agent'`)
+- `files.search(pattern, options?)` — cross-file search across all visible files. See [Files — Cross-File Search](./Files.md#cross-file-search).
+
+### `project`
+
+Read-only access to the current project context. Returns `null` values when the session doesn't belong to a project.
+
+```typescript
+project.current(): Promise<{ id: string, name: string, display_name: string, description: string } | null>
+project.context(): Promise<string | null>
+```
+
+`project.current()` returns the project metadata. `project.context()` returns the project's context instructions string (the same text injected into the system prompt). Useful when agent-authored tools need to adapt behavior based on which project they're running in.
 
 ### `functions`
 
@@ -408,8 +433,11 @@ When code runs via direct function invocation (`POST /agents/:agentId/functions/
 |-----|--------|
 | `session.*` (notepad, task scoping) | There is no session — functions run outside any conversation context. |
 | `browser.*` | Browser contexts are session-scoped; functions have no associated session. |
+| `project.*` | Always returns `null` — functions have no associated session or project context. |
 
 Everything else works the same — `llm.generate()`, `fetch`, `web.*`, `state.*`, `db.*`, `files.*`, `skills.*`, `mcp.*`, `functions.call()`, `require()`, `secrets`, and all utilities. A function that needs to call the LLM (e.g. backing a "summarize this" button) can do so directly. Usage guardrails on spending and token limits apply at the agent level regardless of whether the LLM call originated from a tool or a function.
+
+Note: `files.*` in function context only sees agent-global files (no session or project scope). `state.*` with `{ project: true }` is a no-op in function context (there's no project). Functions that need to access project-scoped files or state should accept the project ID as a parameter and query directly via `db.sql`.
 
 ---
 

@@ -12,17 +12,19 @@ Files live on disk in a `files/` directory. Metadata lives in `metaclaw.db`.
 
 | Column | Type | Description |
 |---|---|---|
-| `_id` | text | UUID |
-| `name` | text | Filename (e.g. `budget.xlsx`) |
+| `_id` | text | Short ID (`f_` prefix + 8 alphanumeric chars via nanoid, e.g. `f_x7kQ9mBn`) |
+| `path` | text | Logical file path (e.g. `forms/w2-employer1.pdf`). Slash-separated, no leading slash. |
 | `mime_type` | text | Detected MIME type (via magic bytes, not extension) |
 | `size` | integer | Size in bytes |
-| `disk_path` | text | Path within `files/` directory |
+| `disk_path` | text | Path within `files/` directory (ID-based on disk, not related to the logical `path`) |
+| `scope_type` | text | `session`, `project`, or `agent` |
+| `scope_id` | text | Session ID, project ID, or null (for agent scope) |
 | `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
-| `source_session_id` | text | Which session uploaded or created it |
+| `source_session_id` | text | Which session uploaded or created it (provenance, not access control) |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-Files are global — any session can access any file, same as state and the database. The `source_session_id` tracks provenance, not access control.
+Uniqueness constraint: `(scope_type, scope_id, path)` — the same path can exist in different scopes without collision.
 
 Disk storage rather than SQLite BLOBs because spreadsheets and PDFs can be 10–50 MB. ExcelJS and pdf-lib work with file paths and Buffers naturally.
 
@@ -35,13 +37,97 @@ Disk storage rather than SQLite BLOBs because spreadsheets and PDFs can be 10–
 
 ---
 
+## File Scoping
+
+Files are scoped to a session, a project, or the agent globally. This determines which sessions can see them.
+
+### Scoping hierarchy
+
+```
+Session files   →  only this conversation sees them (default for uploads in unscoped sessions)
+Project files   →  all sessions within this project see them
+Agent files     →  all sessions across all projects see them
+```
+
+### Default scope on creation
+
+| How the file is created | Default scope |
+|---|---|
+| User uploads in an unscoped session | `session` (that session's ID) |
+| User uploads in a project session | `project` (that project's ID) |
+| Agent creates a file in an unscoped session | `session` |
+| Agent creates a file in a project session | `project` |
+| Agent creates a file via `file_download` | Same rules as above |
+| Agent creates a derived file (`source: derived`) | Same scope as the source file |
+| Sub-session creates a file | Inherits the parent session's scope rules |
+
+### Visibility
+
+`file_list` (and `files.list()` in sandbox) returns files visible to the current session — the union of:
+
+- `scope_type = 'session' AND scope_id = current_session_id`
+- `scope_type = 'project' AND scope_id = current_project_id` (if the session belongs to a project)
+- `scope_type = 'agent' AND scope_id IS NULL`
+
+A `scope` filter parameter on `file_list` lets the agent narrow this (e.g. only session files, only project files).
+
+### Promotion
+
+The `promote_file` meta-tool (and `files.promote()` in sandbox) changes a file's scope upward:
+
+- Session → project (requires the session to belong to a project)
+- Session → agent
+- Project → agent
+
+Demotion is not supported — there's no good reason to narrow a file's visibility.
+
+### "Save as project" bulk promotion
+
+When a session is converted to a project via `save_session_as_project`, all session-scoped files for that session are re-scoped to the new project.
+
+---
+
+## Path-Based File Naming
+
+`agent_files.path` is a logical, slash-separated name within the file's scope:
+
+- `budget.xlsx` (flat — just a filename)
+- `forms/w2-employer1.pdf` (one level of nesting)
+- `receipts/medical/receipt-001.jpg` (deeper nesting)
+
+No leading slash. No `.` or `..` components (rejected on write). The `files.list()` glob matching operates on paths: `files.list("forms/*.pdf")`, `files.list("**/*.xlsx")`.
+
+When files are uploaded with relative paths preserved (batch/folder upload), the paths are stored as-is. When a single file is uploaded without a path, the path is just the filename.
+
+Paths are logical metadata — the physical storage on disk uses the file's short ID as the filename regardless of the logical path.
+
+---
+
 ## Client-Server Transfer
 
 ### Upload (client → server)
 
 `POST /api/files/upload` accepting `multipart/form-data`. Server middleware: **multer** or **busboy**.
 
-The server stores the file, detects the MIME type with the **file-type** package (reads magic bytes — doesn't trust the extension), inserts metadata into `agent_files`, and returns the file ID. The client includes the file ID in the chat message so the agent knows a file was attached.
+The server stores each file, detects the MIME type with the **file-type** package (reads magic bytes — doesn't trust the extension), inserts metadata into `agent_files` with the appropriate scope, and returns the file IDs. The client includes the file IDs in the chat message so the agent knows files were attached.
+
+Parameters:
+
+| Parameter | Required | Description |
+|---|---|---|
+| `session_id` | Yes | Determines default scope (session-scoped if unscoped session, project-scoped if project session) |
+| `files` | Yes | One or more files (multipart fields) |
+| `extract` | No | If `true` and the file is a zip, extract contents preserving internal directory structure as paths |
+
+The endpoint accepts multiple files in a single request. Each file gets its own `agent_files` row. The response returns an array of `{ id, path, size, mime_type, scope_type, scope_id }`.
+
+### Batch upload: folders
+
+The client uses the `webkitdirectory` attribute on the file input (supported in all major browsers) to let the user select a folder. The browser sends all files with `webkitRelativePath` preserved. The server stores each file with its relative path in `agent_files.path`.
+
+### Batch upload: zip extraction
+
+When a file with MIME type `application/zip` is uploaded with `extract=true`, the server extracts the zip and creates individual `agent_files` rows preserving the internal directory structure as paths. Uses the **yauzl** package (MIT). If `extract` is not set, the zip is stored as a regular file.
 
 ### Download (server → client)
 
@@ -51,13 +137,15 @@ The server stores the file, detects the MIME type with the **file-type** package
 
 | Event | When | Payload |
 |---|---|---|
-| `file:created` | Agent creates a new file | `{ id, name, size, mime_type, source_session_id }` |
-| `file:modified` | Agent modifies an existing file | `{ id, name, size, modified_on }` |
+| `file:created` | Agent creates a new file | `{ id, path, size, mime_type, scope_type, scope_id, source_session_id }` |
+| `file:modified` | Agent modifies an existing file | `{ id, path, size, modified_on }` |
 | `file:deleted` | Agent deletes a file | `{ id }` |
 
 ### Client UI
 
 The chat input gets an attachment button (plus drag-and-drop on the message area). Attached files upload immediately and show as chips in the message. Agent-created files appear as download cards in the chat stream.
+
+The attachment button supports multi-file selection and folder selection (via a dropdown or secondary option). Drag-and-drop accepts multiple files.
 
 On Chromium browsers, the File System Access API (`showSaveFilePicker`) can be offered as an alternative to download — writing the file directly back to the user's disk. This is a progressive enhancement, not a requirement.
 
@@ -67,17 +155,19 @@ On Chromium browsers, the File System Access API (`showSaveFilePicker`) can be o
 
 ### Tier 1: Generic file management
 
-The basics — create, list, delete, move files around. Available in every sandbox invocation as `files.*`.
+The basics — create, list, delete, move files around. Available in every sandbox invocation as `files.*`. All listing and creation operations respect the current session's file scope.
 
 | Method | Description |
 |---|---|
-| `files.list(pattern?)` | List files, optionally filtered by glob pattern. Returns `{ id, name, size, mime_type, modified_on }[]` |
+| `files.list(pattern?)` | List visible files, optionally filtered by glob pattern on path. Returns `{ id, path, size, mime_type, scope_type, modified_on }[]` |
 | `files.info(id)` | Full metadata for a single file |
-| `files.create(name, mime?)` | Create a new empty file, returns `{ id, name }` |
+| `files.create(path, mime?)` | Create a new empty file at the given path, returns `{ id, path }`. Scoped per default rules. |
 | `files.delete(id)` | Remove a file from the workspace |
-| `files.copy(id, newName)` | Duplicate a file. Returns the new file's `{ id, name }` |
-| `files.rename(id, newName)` | Rename a file |
-| `files.download(url, filename?)` | Download a URL directly into the file workspace (server-side fetch + save). Returns `{ id, name, size, mime_type }` |
+| `files.copy(id, newPath)` | Duplicate a file. Returns the new file's `{ id, path }` |
+| `files.rename(id, newPath)` | Rename/move a file (change its logical path) |
+| `files.download(url, filename?)` | Download a URL directly into the file workspace (server-side fetch + save). Returns `{ id, path, size, mime_type }` |
+| `files.promote(id, targetScope)` | Promote a file's scope: `'project'` or `'agent'`. See [File Scoping](#file-scoping). |
+| `files.search(pattern, options?)` | Search across visible files. See [Cross-File Search](#cross-file-search). |
 
 ### Tier 2: Text file access (line-based)
 
@@ -89,7 +179,7 @@ For text files — CSV, JSON, code, markdown, config files. The agent can read p
 | `files.writeText(id, content)` | Overwrite the entire file with text |
 | `files.replaceLines(id, startLine, endLine, newContent)` | Replace a range of lines |
 | `files.insertLines(id, afterLine, content)` | Insert lines after a position |
-| `files.searchText(id, pattern)` | Regex search within a file. Returns `{ matches: { line, content }[] }` |
+| `files.searchText(id, pattern)` | Regex search within a single file. Returns `{ matches: { line, content }[] }` |
 | `files.lineCount(id)` | Total line count |
 
 ### Tier 3: Format-specific APIs
@@ -107,6 +197,46 @@ For formats without a dedicated API. The agent (or agent-authored tools) can wor
 | `files.readBytes(id, offset, length)` | Returns base64 of a byte range |
 | `files.writeBytes(id, offset, base64data)` | Write bytes at an offset |
 | `files.appendBytes(id, base64data)` | Append bytes to end of file |
+
+---
+
+## Cross-File Search
+
+Search across all files visible to the current session. Runs server-side: regex on text files, text extraction then search for PDFs, cell value search for spreadsheets. Respects file scoping.
+
+### `files.search()` sandbox API
+
+```typescript
+files.search(pattern: string, options?: {
+  glob?: string    // path glob to filter which files to search (e.g. "forms/*.pdf")
+  scope?: 'session' | 'project' | 'agent' | 'all'  // narrow to a specific scope, default 'all' visible
+}): Promise<{
+  matches: {
+    file_id: string
+    path: string
+    mime_type: string
+    excerpts: { line?: number, text: string }[]
+  }[]
+  files_searched: number
+  truncated: boolean
+}>
+```
+
+Format-specific behavior:
+
+- **Text files:** Direct regex search. `line` is the 1-based line number, `text` is the matching line.
+- **PDFs:** Text extraction (via pdfjs-dist) then regex search. `line` is omitted (PDF text extraction doesn't produce stable line numbers). `text` is a snippet with surrounding context.
+- **Spreadsheets:** Cell value search (via ExcelJS). `text` includes the cell reference, e.g. `"Sheet1!C12: Schedule C income"`.
+- **Images/binary:** Skipped (not searchable).
+
+### Limits
+
+| Limit | Default |
+|---|---|
+| Max files searched per call | 50 |
+| Max total matches returned | 100 |
+
+When limits are hit, `truncated` is `true`.
 
 ---
 
@@ -186,14 +316,15 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
   "parameters": {
     "type": "object",
     "properties": {
-      "pattern": { "type": "string", "description": "Optional glob pattern to filter files" }
+      "pattern": { "type": "string", "description": "Optional glob pattern to filter files by path" },
+      "scope": { "type": "string", "enum": ["session", "project", "agent", "all"], "description": "Filter to a specific scope. Default: 'all' (all files visible to the current session)." }
     },
     "required": []
   }
 }
 ```
 
-**Returns:** `{ files: { id, name, size, mime_type, modified_on }[] }`
+**Returns:** `{ files: { id, path, size, mime_type, scope_type, modified_on }[] }`
 
 ### `file_info`
 
@@ -210,7 +341,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
 }
 ```
 
-**Returns:** Full metadata object.
+**Returns:** Full metadata object including `scope_type` and `scope_id`.
 
 ### `file_read_text`
 
@@ -277,16 +408,17 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
   "parameters": {
     "type": "object",
     "properties": {
-      "name": { "type": "string", "description": "Filename" },
+      "path": { "type": "string", "description": "Logical file path (e.g. 'report.xlsx' or 'output/summary.pdf')" },
       "content": { "type": "string", "description": "Optional initial text content" },
-      "mime_type": { "type": "string", "description": "Optional MIME type. Auto-detected if omitted." }
+      "mime_type": { "type": "string", "description": "Optional MIME type. Auto-detected if omitted." },
+      "scope": { "type": "string", "enum": ["session", "project", "agent"], "description": "Override the default scope. Default: session-scoped for unscoped sessions, project-scoped for project sessions." }
     },
-    "required": ["name"]
+    "required": ["path"]
   }
 }
 ```
 
-**Returns:** `{ id: string, name: string }`
+**Returns:** `{ id: string, path: string, scope_type: string }`
 
 ### `file_delete`
 
@@ -316,14 +448,57 @@ Download a URL into the file workspace.
     "type": "object",
     "properties": {
       "url": { "type": "string", "description": "URL to download" },
-      "filename": { "type": "string", "description": "Optional filename. Inferred from URL if omitted." }
+      "path": { "type": "string", "description": "Optional file path. Inferred from URL if omitted." }
     },
     "required": ["url"]
   }
 }
 ```
 
-**Returns:** `{ id: string, name: string, size: number, mime_type: string }`
+**Returns:** `{ id: string, path: string, size: number, mime_type: string, scope_type: string }`
+
+### `promote_file`
+
+Change a file's scope upward. Session → project or agent. Project → agent.
+
+```json
+{
+  "name": "promote_file",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "File ID" },
+      "target_scope": { "type": "string", "enum": ["project", "agent"], "description": "New scope for the file" }
+    },
+    "required": ["id", "target_scope"]
+  }
+}
+```
+
+Promoting to `project` requires the current session to belong to a project. Promoting a file that is already at or above the target scope is a no-op.
+
+**Returns:** `{ id: string, scope_type: string, scope_id: string | null }`
+
+### `file_search`
+
+Search across all files visible to the current session.
+
+```json
+{
+  "name": "file_search",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "pattern": { "type": "string", "description": "Regex pattern to search for" },
+      "glob": { "type": "string", "description": "Optional path glob to filter which files to search (e.g. 'forms/*.pdf')" },
+      "scope": { "type": "string", "enum": ["session", "project", "agent", "all"], "description": "Narrow to a specific scope. Default: 'all' visible files." }
+    },
+    "required": ["pattern"]
+  }
+}
+```
+
+**Returns:** `{ matches: { file_id: string, path: string, mime_type: string, excerpts: { line?: number, text: string }[] }[], files_searched: number, truncated: boolean }`
 
 ### Format-specific meta-tools
 
@@ -343,6 +518,8 @@ All file APIs run on the server, not inside the isolate. The sandbox gets proxy 
 
 The cost of injecting the proxy stubs is negligible — they're function references, not library code. The npm packages only load when actually called.
 
+The file scope context (current session ID, project ID) is injected into the sandbox at creation time so that `files.list()`, `files.create()`, and `files.search()` automatically apply the correct scope filters without the sandbox code needing to pass scope parameters explicitly.
+
 ---
 
 ## Server-Side Dependencies
@@ -355,6 +532,8 @@ The cost of injecting the proxy stubs is negligible — they're function referen
 | **sharp** | Image resize, crop, convert | Apache 2.0 |
 | **file-type** | MIME detection via magic bytes | MIT |
 | **multer** | Express middleware for multipart/form-data upload parsing | MIT |
+| **yauzl** | Zip file extraction for batch upload | MIT |
+| **nanoid** | Short, URL-safe unique ID generation for file IDs | MIT |
 
 ---
 
@@ -367,3 +546,5 @@ The cost of injecting the proxy stubs is negligible — they're function referen
 - **Format promotion?** When the user uploads `data.csv`, should `files.spreadsheet.*` APIs work on it? ExcelJS can read CSV. Or should `files.spreadsheet.*` only handle `.xlsx` and CSV stays in text-tier territory?
 
 - **Streaming for large spreadsheets?** ExcelJS supports streaming reads for very large workbooks (100k+ rows). The `readRange` API naturally handles partial reads, but the server implementation could use the streaming worksheet reader instead of loading the entire workbook into memory.
+
+- **File cleanup on session archive/delete:** When a session is completed/archived, what happens to its session-scoped files? Options: (a) delete them, (b) keep them orphaned, (c) prompt the user. Leaning toward keeping them but surfacing orphaned files in the settings file browser for manual cleanup.
