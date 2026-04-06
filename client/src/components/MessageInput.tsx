@@ -37,6 +37,8 @@ export default function MessageInput() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }
 
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
@@ -78,20 +80,42 @@ export default function MessageInput() {
         </div>
       )}
       <div className="input-group">
-        <button
-          className="btn btn-outline-secondary"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={!canSend}
-          title="Attach files"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/>
-          </svg>
-        </button>
+        <div className="btn-group">
+          <button
+            className="btn btn-outline-secondary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!canSend}
+            title="Attach files"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/>
+            </svg>
+          </button>
+          <button
+            className="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split"
+            data-bs-toggle="dropdown"
+            disabled={!canSend}
+            aria-expanded="false"
+          >
+            <span className="visually-hidden">Toggle Dropdown</span>
+          </button>
+          <ul className="dropdown-menu">
+            <li><button className="dropdown-item" onClick={() => fileInputRef.current?.click()}>Files</button></li>
+            <li><button className="dropdown-item" onClick={() => folderInputRef.current?.click()}>Folder</button></li>
+          </ul>
+        </div>
         <input
           ref={fileInputRef}
           type="file"
           multiple
+          className="d-none"
+          onChange={handleFileSelect}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-ignore webkitdirectory is not in React's type defs
+          webkitdirectory=""
           className="d-none"
           onChange={handleFileSelect}
         />

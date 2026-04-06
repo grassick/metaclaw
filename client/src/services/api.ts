@@ -116,7 +116,16 @@ export const api = {
     const form = new FormData()
     form.set("agent_id", agentId)
     if (sessionId) form.set("session_id", sessionId)
-    for (const f of files) form.append("files", f)
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      form.append("files", f)
+      const relativePath = (f as any).webkitRelativePath as string | undefined
+      if (relativePath) {
+        form.append("paths", relativePath)
+      } else {
+        form.append("paths", f.name)
+      }
+    }
     const res = await fetch(`${BASE}/files/upload`, { method: "POST", body: form })
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }))

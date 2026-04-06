@@ -68,7 +68,12 @@ export function createFileRoutes(db: Database.Database): Router {
     const now = new Date().toISOString()
     const results: ReturnType<typeof fileToJson>[] = []
 
-    for (const file of files) {
+    const paths: string[] = Array.isArray(req.body.paths) ? req.body.paths
+      : req.body.paths ? [req.body.paths]
+      : []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
       const fileId = generateFileId()
       const ext = path.extname(file.originalname)
       const diskFilename = fileId + ext
@@ -85,8 +90,7 @@ export function createFileRoutes(db: Database.Database): Router {
         // fall back to multer-provided mime
       }
 
-      const filePath = (req.body[`path_${file.fieldname}`] as string)
-        || file.originalname
+      const filePath = paths[i] || file.originalname
 
       const stat = fs.statSync(diskPath)
 
