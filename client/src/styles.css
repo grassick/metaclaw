@@ -143,11 +143,36 @@
 /* ── File preview panel ───────────────────────────────────────────── */
 
 .file-preview-panel {
-  width: min(50vw, 700px);
-  min-width: 340px;
-  max-width: 50vw;
+  min-width: 260px;
   height: 100%;
   background: var(--bs-body-bg);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.file-preview-drag-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+}
+
+.file-preview-drag-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 2px;
+  width: 2px;
+  height: 100%;
+  transition: background-color 0.15s;
+}
+
+.file-preview-drag-handle:hover::after,
+.file-preview-drag-handle.dragging::after {
+  background-color: var(--bs-primary);
 }
 
 /* ── Settings drawer overlay ──────────────────────────────────────── */

@@ -113,25 +113,28 @@ export const api = {
     return request<FileEntry[]>(`${BASE}/files?${params}`)
   },
   uploadFiles: async (files: File[], agentId = "default", sessionId?: string): Promise<FileEntry[]> => {
-    const form = new FormData()
-    form.set("agent_id", agentId)
-    if (sessionId) form.set("session_id", sessionId)
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      form.append("files", f)
-      const relativePath = (f as any).webkitRelativePath as string | undefined
-      if (relativePath) {
-        form.append("paths", relativePath)
-      } else {
-        form.append("paths", f.name)
+    const MAX_PER_REQUEST = 500
+    const all: FileEntry[] = []
+    for (let offset = 0; offset < files.length; offset += MAX_PER_REQUEST) {
+      const chunk = files.slice(offset, offset + MAX_PER_REQUEST)
+      const form = new FormData()
+      form.set("agent_id", agentId)
+      if (sessionId) form.set("session_id", sessionId)
+      for (let i = 0; i < chunk.length; i++) {
+        const f = chunk[i]
+        form.append("files", f)
+        const relativePath = (f as File & { webkitRelativePath?: string }).webkitRelativePath
+        form.append("paths", relativePath || f.name)
       }
+      const res = await fetch(`${BASE}/files/upload`, { method: "POST", body: form })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(body.error ?? `HTTP ${res.status}`)
+      }
+      const part = (await res.json()) as FileEntry[]
+      all.push(...part)
     }
-    const res = await fetch(`${BASE}/files/upload`, { method: "POST", body: form })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: res.statusText }))
-      throw new Error(body.error ?? `HTTP ${res.status}`)
-    }
-    return res.json()
+    return all
   },
   getFileDownloadUrl: (id: string) => `${BASE}/files/${id}/download`,
   getFileViewUrl: (id: string) => `${BASE}/files/${id}/view`,

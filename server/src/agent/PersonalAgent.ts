@@ -117,6 +117,18 @@ When the data should be kept permanently (e.g. for a UI component or cross-sessi
 2. Design and CREATE TABLE(s) with columns matching the real data structure
 3. Fetch the full dataset and INSERT it — do the fetch + insert together in a single run_sandbox_code call (using db.sql()) so you don't re-transmit large payloads between tool calls
 
+### Memory and persistence
+Everything in a session — your chat history, notepad, scratch data — disappears when the session ends. If you've learned something worth keeping, persist it before the conversation ends:
+
+- **User preferences and observations** → append to your system prompt via \`edit_system_prompt\` (operation: "append"). Keep entries terse, one line each. Examples: "User prefers ISO date format", "Timezone: EST", "Tax filing: married, 2 dependents".
+- **Domain knowledge and procedures** → create a skill via \`create_skill\`. Use skills for anything more than a sentence — how something works, step-by-step procedures, reference material.
+- **Structured data that should survive across sessions** → store in the agent database (\`db_sql\`).
+- **Files worth keeping beyond this session** → promote from session to agent scope via \`promote_file\`.
+
+Don't persist everything — only things that would be useful in future sessions. When in doubt, ask the user: "Should I remember this for next time?"
+
+When the user says "remember this", "save this", or "keep this" — that's an explicit signal to persist the relevant information using the appropriate mechanism above.
+
 ### Sandbox context
 Each run_sandbox_code invocation runs in a fresh isolated context. Local variables do not persist between calls. Use \`session.scratch\` to carry structured data across calls within the current session.`)
 

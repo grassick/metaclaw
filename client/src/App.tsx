@@ -7,8 +7,7 @@ import SettingsPanel from "./components/SettingsPanel"
 import FilePreview from "./components/FilePreview"
 
 export default function App() {
-  const loadAgents = useAppStore((s) => s.loadAgents)
-  const loadSessions = useAppStore((s) => s.loadSessions)
+  const bootstrapFromStorage = useAppStore((s) => s.bootstrapFromStorage)
   const initSSE = useAppStore((s) => s.initSSE)
   const showSettings = useAppStore((s) => s.showSettings)
   const toggleSettings = useAppStore((s) => s.toggleSettings)
@@ -18,13 +17,17 @@ export default function App() {
   const setActiveAgent = useAppStore((s) => s.setActiveAgent)
 
   useEffect(() => {
-    loadAgents()
-    loadSessions()
-    initSSE()
+    let cancelled = false
+    void (async () => {
+      await bootstrapFromStorage()
+      if (cancelled) return
+      initSSE()
+    })()
     return () => {
+      cancelled = true
       useAppStore.getState().sseClient?.disconnect()
     }
-  }, [loadAgents, loadSessions, initSSE])
+  }, [bootstrapFromStorage, initSSE])
 
   const handleNewAgent = async () => {
     const name = prompt("Agent name:")
@@ -33,7 +36,7 @@ export default function App() {
     if (!slug) return
     try {
       await api.createAgent(slug, name)
-      await loadAgents()
+      await useAppStore.getState().loadAgents()
       setActiveAgent(slug)
     } catch (err) {
       alert(`Failed to create agent: ${err instanceof Error ? err.message : err}`)

@@ -2,6 +2,26 @@ import { create } from "zustand"
 import { api, type Agent, type Session, type FileEntry } from "../services/api"
 import { SSEClient } from "../services/sse"
 
+const LS_AGENT = "metaclaw.activeAgentId"
+const LS_SESSION = "metaclaw.activeSessionId"
+
+function persistAgentId(id: string) {
+  try {
+    localStorage.setItem(LS_AGENT, id)
+  } catch {
+    /* ignore */
+  }
+}
+
+function persistSessionId(id: string | null) {
+  try {
+    if (id) localStorage.setItem(LS_SESSION, id)
+    else localStorage.removeItem(LS_SESSION)
+  } catch {
+    /* ignore */
+  }
+}
+
 const FILE_REF_PATTERN = /\[file:\s+\S+\s+"([^"]+)"\]/g
 
 function sanitizeMessagesForDisplay(messages: any[]): any[] {
@@ -69,6 +89,7 @@ interface AppStore {
   activeAgentId: string
   loadAgents: () => Promise<void>
   setActiveAgent: (id: string) => void
+  bootstrapFromStorage: () => Promise<void>
 
   // Sessions
   sessions: Session[]
@@ -144,7 +165,38 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setActiveAgent(id: string) {
     set({ activeAgentId: id, activeSessionId: null, messages: [], streamSegments: [], pendingInput: null })
+    persistAgentId(id)
+    persistSessionId(null)
     get().loadSessions()
+  },
+
+  async bootstrapFromStorage() {
+    await get().loadAgents()
+    const agents = get().agents
+    let savedAgent: string | null = null
+    try {
+      savedAgent = localStorage.getItem(LS_AGENT)
+    } catch {
+      /* ignore */
+    }
+    const { activeAgentId: currentAgent } = get()
+    if (savedAgent && agents.some((a) => a._id === savedAgent)) {
+      set({ activeAgentId: savedAgent })
+    } else if (agents.length > 0 && !agents.some((a) => a._id === currentAgent)) {
+      set({ activeAgentId: agents[0]._id })
+      persistAgentId(agents[0]._id)
+    }
+    await get().loadSessions()
+    let savedSession: string | null = null
+    try {
+      savedSession = localStorage.getItem(LS_SESSION)
+    } catch {
+      /* ignore */
+    }
+    const { sessions } = get()
+    if (savedSession && sessions.some((s) => s._id === savedSession)) {
+      await get().selectSession(savedSession)
+    }
   },
 
   // ── Sessions ──
@@ -156,6 +208,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   async selectSession(id: string | null) {
+    persistSessionId(id)
     if (!id) {
       get()._stopFallbackPolling()
       set({ activeSessionId: null, messages: [], streamSegments: [], pendingInput: null, sessionStatus: "idle" })
@@ -187,6 +240,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   async deleteSession(id: string) {
     await api.deleteSession(id)
     if (get().activeSessionId === id) {
+      persistSessionId(null)
       set({ activeSessionId: null, messages: [], streamSegments: [], pendingInput: null, sessionStatus: "idle" })
     }
     await get().loadSessions()

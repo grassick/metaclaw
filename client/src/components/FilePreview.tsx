@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useAppStore } from "../stores/sessionStore"
@@ -53,6 +53,35 @@ export default function FilePreview() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [width, setWidth] = useState(() => Math.round(window.innerWidth * 0.5))
+  const dragging = useRef(false)
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    const startX = e.clientX
+    const startWidth = width
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = startX - ev.clientX
+      const newWidth = Math.max(260, Math.min(window.innerWidth * 0.85, startWidth + delta))
+      setWidth(Math.round(newWidth))
+    }
+
+    const onMouseUp = () => {
+      dragging.current = false
+      document.removeEventListener("mousemove", onMouseMove)
+      document.removeEventListener("mouseup", onMouseUp)
+      document.body.style.cursor = ""
+      document.body.style.userSelect = ""
+    }
+
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+    document.addEventListener("mousemove", onMouseMove)
+    document.addEventListener("mouseup", onMouseUp)
+  }, [width])
+
   useEffect(() => {
     if (!previewFile) return
 
@@ -80,7 +109,11 @@ export default function FilePreview() {
   const filename = previewFile.path.split("/").pop() ?? previewFile.path
 
   return (
-    <div className="file-preview-panel d-flex flex-column border-start">
+    <div className="file-preview-panel d-flex flex-column border-start" style={{ width }}>
+      <div
+        className={`file-preview-drag-handle${dragging.current ? " dragging" : ""}`}
+        onMouseDown={onMouseDown}
+      />
       {/* Header */}
       <div className="d-flex align-items-center gap-2 border-bottom px-3 py-2 bg-body-tertiary">
         <span className="fw-medium text-truncate flex-grow-1" title={previewFile.path}>

@@ -15,8 +15,10 @@ export default function MessageInput() {
   const dropdownRef = useRef<HTMLDivElement>(null)
   const [showDropdown, setShowDropdown] = useState(false)
 
+  const messages = useAppStore((s) => s.messages)
   const isRunning = sessionStatus === "running"
   const canSend = activeSessionId && !isRunning
+  const hasSubstantialHistory = messages.length >= 4
 
   const closeDropdown = useCallback(() => setShowDropdown(false), [])
 
@@ -149,9 +151,30 @@ export default function MessageInput() {
             Stop
           </button>
         ) : (
-          <button className="btn btn-primary" onClick={handleSend} disabled={!canSend}>
-            Send
-          </button>
+          <>
+            {hasSubstantialHistory && canSend && (
+              <button
+                className="btn btn-outline-secondary"
+                title="Save learnings from this session to the agent's memory"
+                onClick={() => {
+                  sendMessage(
+                    "[System: Save to Agent] Review this session and persist anything worth remembering. " +
+                    "Use edit_system_prompt (append) for user preferences and brief observations. " +
+                    "Use create_skill for domain knowledge or procedures. " +
+                    "Use promote_file for files that should survive beyond this session. " +
+                    "Use set_state or db_sql for structured data. " +
+                    "Be selective — only persist things that will be useful in future sessions. " +
+                    "Summarize what you saved."
+                  )
+                }}
+              >
+                💾
+              </button>
+            )}
+            <button className="btn btn-primary" onClick={handleSend} disabled={!canSend}>
+              Send
+            </button>
+          </>
         )}
       </div>
     </div>

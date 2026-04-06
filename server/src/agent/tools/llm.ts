@@ -38,6 +38,11 @@ export function createLlmTools(ctx: MetaToolContext) {
               maxOutputTokens: max_tokens ?? 4096,
               temperature: temperature ?? 0,
             })
+            const raw = result.usage.raw as { cost?: number } | undefined
+            const costPart = raw?.cost != null ? ` cost=$${Number(raw.cost).toFixed(6)}` : ""
+            console.log(
+              `[llm tool] generateObject tokens in=${result.usage.inputTokens ?? "?"} out=${result.usage.outputTokens ?? "?"}${costPart}`,
+            )
             return {
               text: JSON.stringify(result.object),
               parsed: result.object,
@@ -54,6 +59,11 @@ export function createLlmTools(ctx: MetaToolContext) {
               maxOutputTokens: max_tokens ?? 4096,
               temperature: temperature ?? 0,
             })
+            const raw = result.usage.raw as { cost?: number } | undefined
+            const costPart = raw?.cost != null ? ` cost=$${Number(raw.cost).toFixed(6)}` : ""
+            console.log(
+              `[llm tool] generateText tokens in=${result.usage.inputTokens ?? "?"} out=${result.usage.outputTokens ?? "?"}${costPart}`,
+            )
             return {
               text: result.text,
               usage: {

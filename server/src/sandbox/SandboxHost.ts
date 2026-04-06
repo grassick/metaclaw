@@ -219,6 +219,11 @@ function buildGlobalFunctions(
         maxOutputTokens: opts.maxTokens ?? 4096,
         temperature: opts.temperature ?? 0,
       })
+      const raw = result.usage.raw as { cost?: number } | undefined
+      const costPart = raw?.cost != null ? ` cost=$${Number(raw.cost).toFixed(6)}` : ""
+      console.log(
+        `[llm sandbox] generateObject tokens in=${result.usage.inputTokens ?? "?"} out=${result.usage.outputTokens ?? "?"}${costPart}`,
+      )
       return {
         text: JSON.stringify(result.object),
         parsed: result.object,
@@ -235,6 +240,11 @@ function buildGlobalFunctions(
         maxOutputTokens: opts.maxTokens ?? 4096,
         temperature: opts.temperature ?? 0,
       })
+      const raw = result.usage.raw as { cost?: number } | undefined
+      const costPart = raw?.cost != null ? ` cost=$${Number(raw.cost).toFixed(6)}` : ""
+      console.log(
+        `[llm sandbox] generateText tokens in=${result.usage.inputTokens ?? "?"} out=${result.usage.outputTokens ?? "?"}${costPart}`,
+      )
       return {
         text: result.text,
         usage: {

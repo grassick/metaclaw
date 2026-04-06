@@ -47,14 +47,20 @@ function fileToJson(row: FileRow) {
 
 const upload = multer({
   dest: path.join(DATA_DIR, "uploads_tmp"),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+    files: 2000,
+  },
 })
+
+/** Must match client batch size — multer rejects extra parts with MulterError: Unexpected field */
+const MAX_FILES_PER_REQUEST = 500
 
 export function createFileRoutes(db: Database.Database): Router {
   const router = Router()
   ensureDir(FILES_DIR)
 
-  router.post("/upload", upload.array("files", 50), async (req, res) => {
+  router.post("/upload", upload.array("files", MAX_FILES_PER_REQUEST), async (req, res) => {
     const agentId = req.body.agent_id ?? "default"
     const sessionId = req.body.session_id || null
     const files = req.files as Express.Multer.File[] | undefined

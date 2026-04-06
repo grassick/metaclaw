@@ -199,7 +199,11 @@ export class SessionController {
       const steps = await result.steps
       const totalUsage = await result.totalUsage
       const responseMessages = (await result.response).messages
-      console.log(`[agent] steps=${steps.length} totalTokens=${totalUsage?.totalTokens ?? 0} responseMessages=${responseMessages.length}`)
+      const raw = totalUsage?.raw as { cost?: number } | undefined
+      const costPart = raw?.cost != null ? ` cost=$${Number(raw.cost).toFixed(6)}` : ""
+      console.log(
+        `[agent] steps=${steps.length} tokens in=${totalUsage?.inputTokens ?? "?"} out=${totalUsage?.outputTokens ?? "?"} total=${totalUsage?.totalTokens ?? 0}${costPart} responseMessages=${responseMessages.length}`,
+      )
 
       const allMessages = [...messages, ...responseMessages]
 

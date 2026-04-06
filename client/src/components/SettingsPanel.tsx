@@ -194,18 +194,20 @@ function StateViewer() {
 
 function FileBrowser() {
   const activeAgentId = useAppStore((s) => s.activeAgentId)
+  const activeSessionId = useAppStore((s) => s.activeSessionId)
+  const openFilePreview = useAppStore((s) => s.openFilePreview)
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.listFiles(activeAgentId)
+      const data = await api.listFiles(activeAgentId, activeSessionId ?? undefined)
       setFiles(data)
     } finally {
       setLoading(false)
     }
-  }, [activeAgentId])
+  }, [activeAgentId, activeSessionId])
 
   useEffect(() => {
     load()
@@ -253,10 +255,9 @@ function FileBrowser() {
               <tr key={f.id}>
                 <td className="font-monospace">
                   <a
-                    href={api.getFileDownloadUrl(f.id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Download"
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); openFilePreview(f.id, f.path, f.mime_type) }}
+                    title="Open preview"
                   >
                     {f.path}
                   </a>
@@ -302,7 +303,7 @@ function FileBrowser() {
 type Tab = "prompt" | "state" | "files"
 
 export default function SettingsPanel({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>("prompt")
+  const [tab, setTab] = useState<Tab>("files")
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -313,6 +314,14 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
         </div>
 
         <ul className="nav nav-tabs px-3 pt-2">
+          <li className="nav-item">
+            <button
+              className={`nav-link ${tab === "files" ? "active" : ""}`}
+              onClick={() => setTab("files")}
+            >
+              Files
+            </button>
+          </li>
           <li className="nav-item">
             <button
               className={`nav-link ${tab === "prompt" ? "active" : ""}`}
@@ -329,20 +338,12 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               State
             </button>
           </li>
-          <li className="nav-item">
-            <button
-              className={`nav-link ${tab === "files" ? "active" : ""}`}
-              onClick={() => setTab("files")}
-            >
-              Files
-            </button>
-          </li>
         </ul>
 
         <div className="p-3 flex-grow-1 overflow-auto">
+          {tab === "files" && <FileBrowser />}
           {tab === "prompt" && <SystemPromptEditor />}
           {tab === "state" && <StateViewer />}
-          {tab === "files" && <FileBrowser />}
         </div>
       </div>
     </div>
