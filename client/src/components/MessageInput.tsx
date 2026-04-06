@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useRef, useState, useEffect, useCallback } from "react"
 import { useAppStore } from "../stores/sessionStore"
 
 export default function MessageInput() {
@@ -11,9 +11,25 @@ export default function MessageInput() {
   const removeAttachment = useAppStore((s) => s.removeAttachment)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [showDropdown, setShowDropdown] = useState(false)
 
   const isRunning = sessionStatus === "running"
   const canSend = activeSessionId && !isRunning
+
+  const closeDropdown = useCallback(() => setShowDropdown(false), [])
+
+  useEffect(() => {
+    if (!showDropdown) return
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        closeDropdown()
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [showDropdown, closeDropdown])
 
   const handleSend = () => {
     const text = textareaRef.current?.value.trim()
@@ -36,8 +52,6 @@ export default function MessageInput() {
     el.style.height = "auto"
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }
-
-  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -80,7 +94,7 @@ export default function MessageInput() {
         </div>
       )}
       <div className="input-group">
-        <div className="btn-group">
+        <div className="btn-group" ref={dropdownRef} style={{ position: "relative" }}>
           <button
             className="btn btn-outline-secondary"
             onClick={() => fileInputRef.current?.click()}
@@ -93,16 +107,17 @@ export default function MessageInput() {
           </button>
           <button
             className="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split"
-            data-bs-toggle="dropdown"
             disabled={!canSend}
-            aria-expanded="false"
+            onClick={() => setShowDropdown(v => !v)}
           >
             <span className="visually-hidden">Toggle Dropdown</span>
           </button>
-          <ul className="dropdown-menu">
-            <li><button className="dropdown-item" onClick={() => fileInputRef.current?.click()}>Files</button></li>
-            <li><button className="dropdown-item" onClick={() => folderInputRef.current?.click()}>Folder</button></li>
-          </ul>
+          {showDropdown && (
+            <ul className="dropdown-menu show" style={{ position: "absolute", bottom: "100%", left: 0 }}>
+              <li><button className="dropdown-item" onClick={() => { fileInputRef.current?.click(); closeDropdown() }}>Files</button></li>
+              <li><button className="dropdown-item" onClick={() => { folderInputRef.current?.click(); closeDropdown() }}>Folder</button></li>
+            </ul>
+          )}
         </div>
         <input
           ref={fileInputRef}
