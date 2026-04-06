@@ -11,16 +11,8 @@ React + Vite + Bootstrap 5. No CSS-in-JS. The UI has two levels: a **session lis
 |  Metaclaw        [Agent ▾]   [+ New Session]  [gear] |
 +------------+----------------------------------------+
 |            |                                        |
-| Projects   |   Session View                         |
-|  > 2025 Taxes (3)                                   |
-|    Sess 7  |   (chat, canvas, or both — see below)  |
-|    Sess 8  |                                        |
-|    Sess 9  |                                        |
-|  > Recipes (1)                                      |
-|    Sess 5  |                                        |
-|            |                                        |
-| Sessions   |                                        |
-|  > Today   |                                        |
+| Sessions   |   Session View                         |
+|  > Today   |   (chat, canvas, or both — see below)  |
 |    Sess 10 |                                        |
 |    Sess 11 |                                        |
 |  > Earlier |                                        |
@@ -31,17 +23,15 @@ React + Vite + Bootstrap 5. No CSS-in-JS. The UI has two levels: a **session lis
 
 The **agent switcher** dropdown in the top nav shows the current agent's name and lets the user switch between agents. Switching agents changes the session list, settings context, and which agent handles new sessions. A fresh install has a single `default` agent; the dropdown is hidden until a second agent is created.
 
-The session sidebar is collapsible on narrow screens. It has two sections: **Projects** at the top (collapsible groups, each containing their sessions) and **Sessions** below (unscoped sessions grouped by date). Each session shows a title (auto-generated from first message or agent-assigned) and a short timestamp. Active sessions could show a subtle indicator. Sessions are scoped to the current agent.
+The session sidebar is collapsible on narrow screens. It shows sessions for the current agent grouped by date. Each session shows a title (auto-generated from first message or agent-assigned) and a short timestamp. Active sessions could show a subtle indicator.
 
-Projects appear as collapsible groups showing the project name and session count. Clicking a project name expands it to show its sessions and a small "+ New Session" button within that project. The top-level "+ New Session" button creates an unscoped session. Within a project group, the "+ New Session" button creates a session scoped to that project.
+### "Fork into New Agent" action
 
-### "Save as Project" action
-
-Any unscoped session can be converted to a project. Available via:
+Any session can be spun out into its own isolated universe (a new Agent). Available via:
 - A menu item on the session header (three-dot menu or similar)
-- The agent calling `save_session_as_project`
+- The agent calling `fork_agent_from_session`
 
-Opens a small dialog: project name, description. On confirm, creates the project, associates the current session with it, and promotes all session-scoped files to the new project. The session moves from the "Sessions" section to the new project group in the sidebar.
+Opens a small dialog: new agent name, slug, and options to copy data/files. On confirm, creates the new Agent, copies the current agent's capabilities (and optionally data), and moves the session to the new Agent. The UI switches to the new Agent automatically.
 
 ---
 
@@ -173,7 +163,7 @@ The chat input area supports file attachments:
 - **Drag-and-drop** on the message input area — visual drop zone with highlight, accepts multiple files
 - Attached files upload immediately to `POST /api/files/upload` with the current `session_id` and appear as chips below the input
 - When the message is sent, file IDs are included alongside the text so the agent knows files were attached
-- Files are scoped to the current session by default (or to the project if the session belongs to one) — see [Files — File Scoping](./Files.md#file-scoping)
+- Files are scoped to the current session by default — see [Files — File Scoping](./Files.md#file-scoping)
 
 Agent-created files appear in the chat stream as download cards (file path, size, type icon, download button). These are triggered by `file:created` SSE events. Modified files show an "updated" indicator via `file:modified` events.
 
@@ -244,10 +234,9 @@ Sections:
 - **MCP Servers** — list of connected MCP servers with name, transport type, status indicator (green/red/yellow dot), enabled toggle. Add server form with transport picker and relevant fields. Click to view tool list, resources, and connection status. Remove button. See [MCP](./MCP.md). **User-managed only** — the agent cannot add or modify servers.
 - **Scheduled tasks** — list of all system-level scheduled tasks. Each shows name, task prompt, schedule (cron expression or one-shot time), next run, last run, model, enabled/disabled toggle. User can create, edit, pause, resume, and delete tasks directly from here.
 - **Skills** — list of agent and user-created skills with name, title, description, source badge (user/agent), enabled/disabled toggle. Click to view full markdown content. Create/edit/delete buttons. See [Skills](./Skills.md).
-- **Projects** — list of all projects for the current agent with name, description, file count, session count. Click to view project details: context instructions editor, file list, session list. Create/delete project buttons. *Scoped to current agent.*
-- **Agents** — list of all agents with name and model. Create new agents, rename, delete (except `default`). Each agent has its own system prompt, tools, libraries, skills, UI components, state, sessions, projects, MCP servers, and scheduled tasks. *This section is global, not scoped to the current agent.*
+- **Agents** — list of all agents with name and model. Create new agents, rename, delete (except `default`). Each agent has its own system prompt, tools, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. *This section is global, not scoped to the current agent.*
 - **Secrets** — manage API keys (add/edit/delete). Values are masked. *Global — shared across all agents.*
-- **Files** — file workspace browser. Groups files by scope (session / project / agent-global). Shows file paths in a tree view for path hierarchy. Promote button on session/project-scoped files. Batch upload button (multi-file and folder selection). Download, delete buttons. Shows total workspace usage vs limit.
+- **Files** — file workspace browser. Groups files by scope (session / agent-global). Shows file paths in a tree view for path hierarchy. Promote button on session-scoped files. Batch upload button (multi-file and folder selection). Download, delete buttons. Shows total workspace usage vs limit.
 - **Database** — basic stats (table count, total size). Maybe a simple query runner for debugging. *Scoped to current agent's `agent_data_{id}.db`.*
 - **History** — version history of system prompt changes with diff view and rollback
 
@@ -267,22 +256,17 @@ Sessions within the same agent are independent conversations, but they share:
 - `agent_state` (agent-global state for this agent)
 - `agent_data_{id}.db` (for this agent)
 - `agent_secrets` (global — shared across all agents)
-
-Sessions within the same **project** additionally share:
-- Project-scoped files (`agent_files` where `project_id` matches)
-- Project-scoped state (`agent_state` where `project_id` matches)
-- Project context instructions (injected into system prompt)
+- Agent-scoped files (`agent_files` where `session_id IS NULL`)
 
 Files scoped to a specific session are **not** shared — only that session sees them.
 
 This means:
 1. Session A creates a tool. Session B (same agent) can immediately use it.
 2. Session A modifies the system prompt. Session B won't see the change until its next compaction.
-3. Session A writes to `state.set('counter', 5)`. Session B reads `state.get('counter')` and gets 5 (agent-global state is shared).
-4. Session A (in a project) writes to `state.set('filing_status', 'mfj')`. This automatically targets project scope — only sessions in the same project see it.
-5. Both sessions write to the same state key — last write wins, no conflict resolution.
-6. Files uploaded in Session A are session-scoped by default — Session B doesn't see them unless they're promoted or both sessions belong to the same project.
-7. Different agents are fully isolated (separate tools, state, skills, sessions, projects) except for secrets.
+3. Session A writes to `state.set('counter', 5)`. Session B reads `state.get('counter')` and gets 5.
+4. Both sessions write to the same state key — last write wins, no conflict resolution.
+5. Files uploaded in Session A are session-scoped by default — Session B doesn't see them unless they're promoted.
+6. Different agents are fully isolated (separate tools, state, skills, sessions, DBs) except for secrets.
 
 ### How bad is this?
 
@@ -362,22 +346,13 @@ event: sessions:list
 data: {"action":"created","id":"sess_new"}
 
 event: file:created
-data: {"id":"f_abc123","path":"output/report.xlsx","size":45200,"mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","scope":"project","project_id":"taxes-2025","source_session_id":"sess_123"}
+data: {"id":"f_abc123","path":"output/report.xlsx","size":45200,"mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","scope":"session","session_id":"sess_123","source_session_id":"sess_123"}
 
 event: file:modified
 data: {"id":"f_abc123","path":"output/report.xlsx","size":46100,"modified_on":"2026-02-25T14:30:00Z"}
 
 event: file:deleted
 data: {"id":"f_abc123"}
-
-event: project:created
-data: {"id":"taxes-2025","name":"2025 Taxes","display_name":"2025 Taxes"}
-
-event: project:updated
-data: {"id":"taxes-2025","name":"2025 Taxes"}
-
-event: project:deleted
-data: {"id":"taxes-2025"}
 
 event: skill:change
 data: {"name":"quarterly-reports","action":"created"}
@@ -400,22 +375,17 @@ User actions go through normal REST calls. These don't need a persistent connect
 |--------|--------|----------|
 | Send a message | POST | `/sessions/:id/message` |
 | Respond to ask_user / render_and_wait | POST | `/sessions/:id/tool-response` |
-| Create a new session | POST | `/sessions` (body includes optional `project_id`) |
+| Create a new session | POST | `/sessions` |
 | Continue after token limit | POST | `/sessions/:id/continue` |
 | Invoke a backend function | POST | `/agents/:agentId/functions/:name/invoke` |
-| Read a state value | GET | `/state/:key` (optional query param `project_id` — frontend derives this from the active session's project) |
-| Write a state value | POST | `/state/:key` (optional query param `project_id` — frontend derives this from the active session's project) |
+| Read a state value | GET | `/state/:key` |
+| Write a state value | POST | `/state/:key` |
 | Upload files | POST | `/files/upload` (multipart/form-data, `session_id` required, multi-file, optional `extract=true`) |
 | Download a file | GET | `/files/:id/download` |
 | List files | GET | `/files` (query params: `session_id`, `scope`) |
 | Delete a file | DELETE | `/files/:id` |
 | Promote a file | POST | `/files/:id/promote` (body: `{ target_scope }`) |
 | Search files | POST | `/files/search` (body: `{ pattern, glob?, scope? }`, requires `session_id`) |
-| List projects | GET | `/agents/:agentId/projects` |
-| Create a project | POST | `/agents/:agentId/projects` |
-| Read a project | GET | `/agents/:agentId/projects/:id` |
-| Update a project | PATCH | `/agents/:agentId/projects/:id` |
-| Delete a project | DELETE | `/agents/:agentId/projects/:id` |
 
 ### Client-side architecture
 
@@ -433,15 +403,11 @@ SSE Connection (GET /events)
   │    Updates the chat panel and canvas for the currently viewed session
   │    Filters by the active session ID
   │
-  ├─ ProjectStore
-  │    ← project:created, project:updated, project:deleted
-  │    Updates project groups in sidebar, project details in settings
-  │
   ├─ FileStore
   │    ← file:created, file:modified, file:deleted
   │    Updates file download cards in chat, file browser in settings
   │    Filters by scope: only shows files visible to the active session
-  │    (session-scoped + project-scoped if in a project + agent-global)
+  │    (session-scoped + agent-global)
   │
   ├─ StateStore
   │    ← state:change

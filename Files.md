@@ -19,13 +19,12 @@ Files live on disk in a `files/` directory. Metadata lives in `metaclaw.db`.
 | `size` | integer | Size in bytes |
 | `disk_path` | text | Path within `files/` directory (ID-based on disk, not related to the logical `path`) |
 | `session_id` | text | FK to `agent_sessions`. Set for session-scoped files, null otherwise. `ON DELETE CASCADE`. |
-| `project_id` | text | FK to `agent_projects`. Set for project-scoped files, null otherwise. `ON DELETE CASCADE`. |
 | `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
 | `source_session_id` | text | Which session uploaded or created it (provenance, not access control) |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, `project_id IS NOT NULL` → project-scoped, both null → agent-scoped. No uniqueness constraint on paths — since a session sees files from multiple scopes simultaneously, cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
+Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, null → agent-scoped. No uniqueness constraint on paths — since a session sees files from multiple scopes simultaneously, cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
 
 Disk storage rather than SQLite BLOBs because spreadsheets and PDFs can be 10–50 MB. ExcelJS and pdf-lib work with file paths and Buffers naturally.
 
@@ -40,25 +39,22 @@ Disk storage rather than SQLite BLOBs because spreadsheets and PDFs can be 10–
 
 ## File Scoping
 
-Files are scoped to a session, a project, or the agent globally. This determines which sessions can see them.
+Files are scoped to a session or the agent globally. This determines which sessions can see them.
 
 ### Scoping hierarchy
 
 ```
-Session files   →  only this conversation sees them (default for uploads in unscoped sessions)
-Project files   →  all sessions within this project see them
-Agent files     →  all sessions across all projects see them
+Session files   →  only this conversation sees them (default for uploads)
+Agent files     →  all sessions across the agent see them
 ```
 
 ### Default scope on creation
 
 | How the file is created | Default scope |
 |---|---|
-| User uploads in an unscoped session | `session` (that session's ID) |
-| User uploads in a project session | `project` (that project's ID) |
-| Agent creates a file in an unscoped session | `session` |
-| Agent creates a file in a project session | `project` |
-| Agent creates a file via `file_download` | Same rules as above |
+| User uploads | `session` (that session's ID) |
+| Agent creates a file | `session` |
+| Agent creates a file via `file_download` | `session` |
 | Agent creates a derived file (`source: derived`) | Same scope as the source file |
 | Sub-session creates a file | Inherits the parent session's scope rules |
 
@@ -67,24 +63,17 @@ Agent files     →  all sessions across all projects see them
 `file_list` (and `files.list()` in sandbox) returns files visible to the current session — the union of:
 
 - `session_id = current_session_id`
-- `project_id = current_project_id` (if the session belongs to a project)
-- `session_id IS NULL AND project_id IS NULL` (agent-scoped files)
+- `session_id IS NULL` (agent-scoped files)
 
-A `scope` filter parameter on `file_list` lets the agent narrow this (e.g. only session files, only project files).
+A `scope` filter parameter on `file_list` lets the agent narrow this (e.g. only session files, only agent files).
 
 ### Promotion
 
 The `promote_file` meta-tool (and `files.promote()` in sandbox) changes a file's scope upward:
 
-- Session → project (requires the session to belong to a project)
 - Session → agent
-- Project → agent
 
 Demotion is not supported — there's no good reason to narrow a file's visibility.
-
-### "Save as project" bulk promotion
-
-When a session is converted to a project via `save_session_as_project`, all session-scoped files for that session are re-scoped to the new project.
 
 ---
 
@@ -116,11 +105,11 @@ Parameters:
 
 | Parameter | Required | Description |
 |---|---|---|
-| `session_id` | Yes | Determines default scope (session-scoped if unscoped session, project-scoped if project session) |
+| `session_id` | Yes | Determines default scope (session-scoped). Set to null explicitly if agent-scoped uploading is needed. |
 | `files` | Yes | One or more files (multipart fields) |
 | `extract` | No | If `true` and the file is a zip, extract contents preserving internal directory structure as paths |
 
-The endpoint accepts multiple files in a single request. Each file gets its own `agent_files` row. The response returns an array of `{ id, path, size, mime_type, scope, session_id?, project_id? }`.
+The endpoint accepts multiple files in a single request. Each file gets its own `agent_files` row. The response returns an array of `{ id, path, size, mime_type, scope, session_id? }`.
 
 ### Batch upload: folders
 
@@ -138,7 +127,7 @@ When a file with MIME type `application/zip` is uploaded with `extract=true`, th
 
 | Event | When | Payload |
 |---|---|---|
-| `file:created` | Agent creates a new file | `{ id, path, size, mime_type, scope, session_id?, project_id?, source_session_id }` |
+| `file:created` | Agent creates a new file | `{ id, path, size, mime_type, scope, session_id?, source_session_id }` |
 | `file:modified` | Agent modifies an existing file | `{ id, path, size, modified_on }` |
 | `file:deleted` | Agent deletes a file | `{ id }` |
 
@@ -167,7 +156,7 @@ The basics — create, list, delete, move files around. Available in every sandb
 | `files.copy(id, newPath)` | Duplicate a file. Returns the new file's `{ id, path }` |
 | `files.rename(id, newPath)` | Rename/move a file (change its logical path) |
 | `files.download(url, filename?)` | Download a URL directly into the file workspace (server-side fetch + save). Returns `{ id, path, size, mime_type }` |
-| `files.promote(id, targetScope)` | Promote a file's scope: `'project'` or `'agent'`. See [File Scoping](#file-scoping). |
+| `files.promote(id, targetScope)` | Promote a file's scope: `'agent'`. See [File Scoping](#file-scoping). |
 | `files.search(pattern, options?)` | Search across visible files. See [Cross-File Search](#cross-file-search). |
 
 ### Tier 2: Text file access (line-based)
@@ -210,7 +199,7 @@ Search across all files visible to the current session. Runs server-side: regex 
 ```typescript
 files.search(pattern: string, options?: {
   glob?: string    // path glob to filter which files to search (e.g. "forms/*.pdf")
-  scope?: 'session' | 'project' | 'agent' | 'all'  // narrow to a specific scope, default 'all' visible
+  scope?: 'session' | 'agent' | 'all'  // narrow to a specific scope, default 'all' visible
 }): Promise<{
   matches: {
     file_id: string
@@ -318,7 +307,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
     "type": "object",
     "properties": {
       "pattern": { "type": "string", "description": "Optional glob pattern to filter files by path" },
-      "scope": { "type": "string", "enum": ["session", "project", "agent", "all"], "description": "Filter to a specific scope. Default: 'all' (all files visible to the current session)." }
+      "scope": { "type": "string", "enum": ["session", "agent", "all"], "description": "Filter to a specific scope. Default: 'all' (all files visible to the current session)." }
     },
     "required": []
   }
@@ -342,7 +331,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
 }
 ```
 
-**Returns:** Full metadata object including `scope` (derived: `'session'`, `'project'`, or `'agent'`), `session_id`, and `project_id`.
+**Returns:** Full metadata object including `scope` (derived: `'session'`, or `'agent'`), and `session_id`.
 
 ### `file_read_text`
 
@@ -412,7 +401,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
       "path": { "type": "string", "description": "Logical file path (e.g. 'report.xlsx' or 'output/summary.pdf')" },
       "content": { "type": "string", "description": "Optional initial text content" },
       "mime_type": { "type": "string", "description": "Optional MIME type. Auto-detected if omitted." },
-      "scope": { "type": "string", "enum": ["session", "project", "agent"], "description": "Override the default scope. Default: session-scoped for unscoped sessions, project-scoped for project sessions." }
+      "scope": { "type": "string", "enum": ["session", "agent"], "description": "Override the default scope. Default: session-scoped." }
     },
     "required": ["path"]
   }
@@ -460,7 +449,7 @@ Download a URL into the file workspace.
 
 ### `promote_file`
 
-Change a file's scope upward. Session → project or agent. Project → agent.
+Change a file's scope upward: Session → agent.
 
 ```json
 {
@@ -469,16 +458,16 @@ Change a file's scope upward. Session → project or agent. Project → agent.
     "type": "object",
     "properties": {
       "id": { "type": "string", "description": "File ID" },
-      "target_scope": { "type": "string", "enum": ["project", "agent"], "description": "New scope for the file" }
+      "target_scope": { "type": "string", "enum": ["agent"], "description": "New scope for the file" }
     },
     "required": ["id", "target_scope"]
   }
 }
 ```
 
-Promoting to `project` requires the current session to belong to a project. Promoting a file that is already at or above the target scope is a no-op.
+Promoting a file that is already at or above the target scope is a no-op.
 
-**Returns:** `{ id: string, scope: string, session_id?: string, project_id?: string }`
+**Returns:** `{ id: string, scope: string, session_id?: string }`
 
 ### `file_search`
 
@@ -492,7 +481,7 @@ Search across all files visible to the current session.
     "properties": {
       "pattern": { "type": "string", "description": "Regex pattern to search for" },
       "glob": { "type": "string", "description": "Optional path glob to filter which files to search (e.g. 'forms/*.pdf')" },
-      "scope": { "type": "string", "enum": ["session", "project", "agent", "all"], "description": "Narrow to a specific scope. Default: 'all' visible files." }
+      "scope": { "type": "string", "enum": ["session", "agent", "all"], "description": "Narrow to a specific scope. Default: 'all' visible files." }
     },
     "required": ["pattern"]
   }
@@ -519,7 +508,7 @@ All file APIs run on the server, not inside the isolate. The sandbox gets proxy 
 
 The cost of injecting the proxy stubs is negligible — they're function references, not library code. The npm packages only load when actually called.
 
-The file scope context (current session ID, project ID) is injected into the sandbox at creation time so that `files.list()`, `files.create()`, and `files.search()` automatically apply the correct scope filters without the sandbox code needing to pass scope parameters explicitly.
+The file scope context (current session ID) is injected into the sandbox at creation time so that `files.list()`, `files.create()`, and `files.search()` automatically apply the correct scope filters without the sandbox code needing to pass scope parameters explicitly.
 
 ---
 

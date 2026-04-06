@@ -126,7 +126,7 @@ Supports multiple edit operations so the agent doesn't have to replace the entir
 
 ## State Management
 
-Key-value store backed by the `agent_state` table. Values are arbitrary JSON. State is **automatically scoped by session context**: when the session belongs to a project, reads check project scope first then fall back to agent-global; writes target project scope. When the session has no project, everything operates on agent-global scope. Use `global: true` to explicitly bypass project scope and access agent-global state from within a project session.
+Key-value store backed by the `agent_state` table. Values are arbitrary JSON. State is global to the agent — UI components, sessions, and scheduled tasks all share the same state.
 
 ### `get_state`
 
@@ -136,8 +136,7 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
   "parameters": {
     "type": "object",
     "properties": {
-      "key": { "type": "string", "description": "The state key to read" },
-      "global": { "type": "boolean", "description": "If true, read from agent-global state even when in a project session. Default: false (automatic scoping)." }
+      "key": { "type": "string", "description": "The state key to read" }
     },
     "required": ["key"]
   }
@@ -145,8 +144,6 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
 ```
 
 **Returns:** `{ value: any | null }` — `null` if the key doesn't exist.
-
-Read behavior: in a project session, checks project-scoped state first; if not found, falls back to agent-global. With `global: true`, skips project scope entirely.
 
 ### `set_state`
 
@@ -157,8 +154,7 @@ Read behavior: in a project session, checks project-scoped state first; if not f
     "type": "object",
     "properties": {
       "key": { "type": "string", "description": "The state key to write" },
-      "value": { "description": "Any JSON-serializable value" },
-      "global": { "type": "boolean", "description": "If true, write to agent-global state even when in a project session. Default: false (automatic scoping)." }
+      "value": { "description": "Any JSON-serializable value" }
     },
     "required": ["key", "value"]
   }
@@ -166,8 +162,6 @@ Read behavior: in a project session, checks project-scoped state first; if not f
 ```
 
 **Returns:** `{ ok: true }`
-
-Write behavior: in a project session, writes to project scope. Outside a project, writes to agent-global. With `global: true`, always writes to agent-global.
 
 ### `delete_state`
 
@@ -177,8 +171,7 @@ Write behavior: in a project session, writes to project scope. Outside a project
   "parameters": {
     "type": "object",
     "properties": {
-      "key": { "type": "string", "description": "The state key to delete" },
-      "global": { "type": "boolean", "description": "If true, delete from agent-global state even when in a project session. Default: false (automatic scoping)." }
+      "key": { "type": "string", "description": "The state key to delete" }
     },
     "required": ["key"]
   }
@@ -195,8 +188,7 @@ Write behavior: in a project session, writes to project scope. Outside a project
   "parameters": {
     "type": "object",
     "properties": {
-      "prefix": { "type": "string", "description": "Optional prefix to filter keys by" },
-      "global": { "type": "boolean", "description": "If true, list only agent-global keys even when in a project session. Default: false (returns keys from both project and agent-global scopes)." }
+      "prefix": { "type": "string", "description": "Optional prefix to filter keys by" }
     },
     "required": []
   }
@@ -1638,141 +1630,31 @@ When a session hits its token limit mid-step, the current LLM call is aborted an
 
 ---
 
-## Projects
+## Agent Forking
 
-Projects are lightweight scoping containers within an agent. A project groups files, state, and sessions around a purpose (e.g. "2025 Taxes") without creating a separate agent. Projects share the parent agent's tools, libraries, functions, skills, and capabilities — they scope the **data**, not the **capabilities**.
+A session can be spun out into a brand new Agent. This is the primary mechanism for specialization — start a conversation in your default agent, realize it's becoming a complex project (like "2025 Taxes"), and fork it into an isolated universe.
 
-See [Files — File Scoping](./Files.md#file-scoping) for how projects affect file visibility.
+### `fork_agent_from_session`
 
-### `create_project`
+Creates a new Agent by copying the current agent's capabilities (tools, functions, UI components, system prompt) and optionally its data (database, state). The current session and its files are moved to the new Agent.
 
 ```json
 {
-  "name": "create_project",
+  "name": "fork_agent_from_session",
   "parameters": {
     "type": "object",
     "properties": {
-      "name": { "type": "string", "description": "Unique slug (lowercase, hyphens). e.g. 'taxes-2025'" },
-      "display_name": { "type": "string", "description": "Human-readable display name (e.g. '2025 Taxes')" },
-      "description": { "type": "string", "description": "Brief description of the project's purpose" },
-      "context": { "type": "string", "description": "Optional initial context instructions, injected into the system prompt for sessions within this project" }
+      "slug": { "type": "string", "description": "Unique slug for the new agent (e.g. 'taxes-2025')" },
+      "name": { "type": "string", "description": "Human-readable display name (e.g. '2025 Taxes')" },
+      "copy_data": { "type": "boolean", "description": "If true, copies the SQLite database and state KV store to the new agent. If false, only capabilities are copied. Default: true." },
+      "promote_files": { "type": "boolean", "description": "If true, all session-scoped files in the current session are promoted to agent-scoped files in the new agent. Default: true." }
     },
-    "required": ["name", "display_name"]
+    "required": ["slug", "name"]
   }
 }
 ```
 
-**Returns:** `{ id: string, name: string }`
-
-### `list_projects`
-
-```json
-{
-  "name": "list_projects",
-  "parameters": {
-    "type": "object",
-    "properties": {},
-    "required": []
-  }
-}
-```
-
-**Returns:** `{ projects: { id, name, display_name, description, file_count, session_count, modified_on }[] }`
-
-### `update_project`
-
-Update a project's metadata or context instructions. The `context` field supports the same edit operations as `edit_system_prompt`.
-
-```json
-{
-  "name": "update_project",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "id": { "type": "string", "description": "Project ID (slug)" },
-      "display_name": { "type": "string", "description": "New display name" },
-      "description": { "type": "string", "description": "New description" },
-      "operation": {
-        "type": "string",
-        "enum": ["replace", "find_replace", "append", "prepend", "delete"],
-        "description": "Edit operation on the context field"
-      },
-      "content": {
-        "type": "string",
-        "description": "For replace: new full context. For append/prepend: text to add. For delete: text to remove."
-      },
-      "find": { "type": "string", "description": "For find_replace: exact substring to find" },
-      "replace": { "type": "string", "description": "For find_replace: replacement text" },
-      "replace_all": { "type": "boolean", "description": "For find_replace: replace all occurrences. Default: false." }
-    },
-    "required": ["id"]
-  }
-}
-```
-
-If only metadata fields (`display_name`, `description`) are provided without an `operation`, only metadata is updated — the context is untouched.
-
-**Returns:** `{ id: string, name: string }`
-
-### `delete_project`
-
-Delete a project. Files scoped to the project are deleted. Sessions scoped to the project become unscoped. Promote any files you want to keep before deleting.
-
-```json
-{
-  "name": "delete_project",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "id": { "type": "string", "description": "Project ID to delete" }
-    },
-    "required": ["id"]
-  }
-}
-```
-
-**Returns:** `{ deleted: boolean }`
-
-### `save_session_as_project`
-
-Convert the current session into a project. Creates a new project, associates the current session with it, and promotes all session-scoped files to the new project. This is the organic creation flow — the user has been working in a plain session and decides to make it persistent.
-
-```json
-{
-  "name": "save_session_as_project",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "name": { "type": "string", "description": "Unique slug for the project" },
-      "display_name": { "type": "string", "description": "Human-readable display name" },
-      "description": { "type": "string", "description": "Brief description" },
-      "context": { "type": "string", "description": "Optional initial context instructions" }
-    },
-    "required": ["name", "display_name"]
-  }
-}
-```
-
-**Returns:** `{ id: string, name: string, files_deleted: number }`
-
-### `read_project`
-
-Read the full project definition including context.
-
-```json
-{
-  "name": "read_project",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "id": { "type": "string", "description": "Project ID" }
-    },
-    "required": ["id"]
-  }
-}
-```
-
-**Returns:** `{ id, name, display_name, description, context, file_count, session_count, created_on, modified_on }`
+**Returns:** `{ id: string, name: string, files_promoted: number }`
 
 ---
 
@@ -1879,10 +1761,10 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | ------------------------ | ----------------- | ------ | ----------------------------------------------------------------------- |
 | `read_system_prompt`     | Self-modification | No     | Read the current stored system prompt                                   |
 | `edit_system_prompt`     | Self-modification | No     | Edit the system prompt (replace, find/replace, append, prepend, delete) |
-| `get_state`              | State             | No     | Read a state key (auto-scoped to project or agent-global)               |
-| `set_state`              | State             | No     | Write a state key (auto-scoped to project or agent-global)              |
-| `delete_state`           | State             | No     | Delete a state key (auto-scoped to project or agent-global)             |
-| `list_state_keys`        | State             | No     | List keys with optional prefix filter (auto-scoped)                     |
+| `get_state`              | State             | No     | Read a state key (agent-global)                                         |
+| `set_state`              | State             | No     | Write a state key (agent-global)                                        |
+| `delete_state`           | State             | No     | Delete a state key (agent-global)                                       |
+| `list_state_keys`        | State             | No     | List keys with optional prefix filter                                   |
 | `db_sql`                 | Database          | No     | Run any SQL on the agent's SQLite DB                                    |
 | `db_schema`              | Database          | No     | List all tables and their columns                                       |
 | `create_tool`            | Tool management   | No     | Create a new agent-defined tool                                         |
@@ -1938,12 +1820,7 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | `fork_session`           | Sub-sessions      | No     | Fork current session (copies history + notepad) with a task             |
 | `wait_for_sessions`      | Sub-sessions      | Yes    | Wait for sub-sessions to complete                                       |
 | `report_result`          | Sub-sessions      | No     | Declare results and end the sub-session (sub-sessions only)             |
-| `create_project`         | Projects          | No     | Create a new project (data scope within the agent)                      |
-| `list_projects`          | Projects          | No     | List all projects                                                       |
-| `read_project`           | Projects          | No     | Read a project's full definition including context                      |
-| `update_project`         | Projects          | No     | Update project metadata or context instructions                         |
-| `delete_project`         | Projects          | No     | Delete a project (project files are deleted; promote first to keep)     |
-| `save_session_as_project`| Projects          | No     | Convert current session into a project                                  |
+| `fork_agent_from_session`| Agent Forking     | No     | Spin out the current session into a new isolated Agent                  |
 | `web_search`             | Web               | No     | Search the web (see [Web](./Web.md))                                    |
 | `web_read`               | Web               | No     | Extract clean readable content from a URL (see [Web](./Web.md))         |
 | `file_list`              | Files             | No     | List visible files with scope filtering (see [Files](./Files.md))       |
@@ -1954,7 +1831,7 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | `file_write_text`        | Files             | No     | Write text file content                                                 |
 | `file_replace_lines`     | Files             | No     | Replace a range of lines in a text file                                 |
 | `file_download`          | Files             | No     | Download a URL into the file workspace                                  |
-| `promote_file`           | Files             | No     | Promote a file's scope (session→project→agent)                          |
+| `promote_file`           | Files             | No     | Promote a file's scope (session→agent)                                  |
 | `file_search`            | Files             | No     | Search across visible files (text, PDF, spreadsheet)                    |
 | `spreadsheet_*`          | Files             | No     | Spreadsheet operations (see [Files](./Files.md))                        |
 | `pdf_*`                  | Files             | No     | PDF operations (see [Files](./Files.md))                                |

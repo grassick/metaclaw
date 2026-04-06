@@ -50,7 +50,7 @@ graph TD
 The database supports multiple agents. Each agent has its own system prompt, tools, functions, libraries, skills, UI components, state, sessions, MCP server connections, and scheduled tasks. A fresh install creates a single `default` agent.
 
 Two kinds of SQLite databases:
-- **`metaclaw.db`** — app-internal: agents, projects, sessions, tools, functions, libraries, components, state, reminders, scheduled tasks, secrets, config history, MCP server configs, skills, files metadata
+- **`metaclaw.db`** — app-internal: agents, sessions, tools, functions, libraries, components, state, reminders, scheduled tasks, secrets, config history, MCP server configs, skills, files metadata
 - **`agent_data_{id}.db`** (one per agent) — agent-controlled: tables the agent creates via `db_sql`. Completely separate so the agent can never touch app internals. Each agent gets its own database file.
 
 ## Files to Copy from Monorepo
@@ -81,7 +81,6 @@ Stores conversation history, status, pending tool calls. Extended with sub-sessi
 | `token_limit` | integer | Max tokens before the session is stopped (null = system default) |
 | `token_usage` | integer | Tokens consumed so far |
 | `notepad` | text | Session-scoped freeform markdown scratchpad (see [Session Notepad](./Session%20Notepad.md)) |
-| `project_id` | text | FK to `agent_projects`. Null for unscoped sessions. |
 
 ### `agents`
 
@@ -160,19 +159,16 @@ Reusable React components / "pages" the agent has created. Scoped per agent.
 
 ### `agent_state`
 
-Key-value store for persistent agent state. Scoped per agent, with optional project-level partitioning. State is **automatically scoped by session context** — the meta-tools and sandbox API resolve the correct scope based on the session's `project_id`, so callers rarely need to think about it. See [Built-in Tools — State Management](./Built-in%20Tools.md#state-management).
+Key-value store for persistent agent state. Scoped per agent. State is **automatically scoped to the agent** — UI components and sessions for the same agent share this state. See [Built-in Tools — State Management](./Built-in%20Tools.md#state-management).
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `agent_id` | text | FK to `agents` |
-| `project_id` | text | FK to `agent_projects`. Empty string `''` for agent-global state. |
 | `key` | text | State key |
 | `value` | text | Arbitrary JSON value |
 | `modified_on` | text | ISO 8601 |
 
-Primary key: `(agent_id, project_id, key)`. Agent-global state uses `project_id = ''` (empty string) rather than NULL — SQLite treats NULLs as distinct in uniqueness checks, so a nullable composite PK would allow duplicate agent-global keys. The empty string sentinel avoids this; the meta-tools and sandbox API handle the mapping transparently.
-
-The same key can exist at both agent scope (`project_id = ''`) and project scope (`project_id = 'taxes-2025'`) without collision. Reads in a project session check project scope first, then fall back to agent-global. Writes in a project session target project scope by default. The `global` flag on meta-tools / sandbox API bypasses this and accesses agent-global state directly.
+Primary key: `(agent_id, key)`.
 
 ### `agent_secrets`
 
@@ -255,23 +251,9 @@ MCP server configurations. Scoped per agent. See [MCP](./MCP.md).
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-### `agent_projects`
-
-Lightweight scoping layer between agents and sessions. A project is a persistent container for files and state within an agent — it shares the agent's tools, libraries, functions, and skills but scopes data to a specific purpose (e.g. "2025 Taxes"). Scoped per agent. See [Files — File Scoping](./Files.md#file-scoping).
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `_id` | text | Unique slug (e.g. `taxes-2025`) |
-| `agent_id` | text | FK to `agents` |
-| `display_name` | text | Human-readable display name (e.g. "2025 Taxes") |
-| `description` | text | Brief description |
-| `context` | text | Instructions injected into system prompt when a session operates within this project. Agent-editable (like the observations section of the system prompt). |
-| `created_on` | text | ISO 8601 |
-| `modified_on` | text | ISO 8601 |
-
 ### `agent_files`
 
-File workspace metadata. Actual file data lives on disk in `files/`. Files are scoped to a session, project, or the agent globally. See [Files](./Files.md).
+File workspace metadata. Actual file data lives on disk in `files/`. Files are scoped to a session or the agent globally. See [Files](./Files.md).
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -282,15 +264,14 @@ File workspace metadata. Actual file data lives on disk in `files/`. Files are s
 | `size` | integer | Size in bytes |
 | `disk_path` | text | Path within `files/` directory (ID-based on disk, unrelated to logical `path`) |
 | `session_id` | text | FK to `agent_sessions`. Set for session-scoped files, null otherwise. `ON DELETE CASCADE`. |
-| `project_id` | text | FK to `agent_projects`. Set for project-scoped files, null otherwise. `ON DELETE CASCADE`. |
 | `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
 | `source_session_id` | text | Which session uploaded or created the file (provenance, not access control) |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, `project_id IS NOT NULL` → project-scoped, both null → agent-scoped. No uniqueness constraint on paths — a session can see files from session, project, and agent scopes simultaneously, so cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
+Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, null → agent-scoped. No uniqueness constraint on paths — a session can see files from session and agent scopes simultaneously, so cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
 
-Files uploaded in unscoped sessions are session-scoped by default; files in project sessions are project-scoped by default. See [Files — File Scoping](./Files.md#file-scoping) for full rules.
+Files uploaded in a session are session-scoped by default. See [Files — File Scoping](./Files.md#file-scoping) for full rules.
 
 ### `agent_config_history`
 
@@ -321,10 +302,7 @@ On each session init and at compaction time, dynamically build the system prompt
 7. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
 8. A summary of available skills (name + title + description + tags from `agent_skills` for this agent — see [Skills](./Skills.md))
 9. A summary of connected MCP servers and their tools (server name + tool names from `agent_mcp_servers` for this agent — see [MCP](./MCP.md))
-10. A summary of available projects (display_name + description from `agent_projects` for this agent)
-11. **Current project context** (from `agent_projects.context`, if the session has a `project_id`) — injected as a dedicated section so the agent knows the project's accumulated instructions and domain knowledge
-12. **Current project file list** (paths of files scoped to the project, so the agent knows what's available without calling `file_list`)
-13. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
+10. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))
 
 This keeps the agent aware of its full capability set without loading all tool/library code into context.
 
@@ -372,14 +350,13 @@ Emitters:
 - Component/tool/library/skill CRUD → `component:change`
 - Function CRUD → `function:change`
 - File operations → `file:created`, `file:modified`, `file:deleted` (see [Files](./Files.md))
-- Project CRUD → `project:created`, `project:updated`, `project:deleted`
 - MCP server status → `mcp:status` (connected, disconnected, error — see [MCP](./MCP.md))
 - Session creation/deletion → `sessions:list`
 - Scheduler → `session:status` (when a reminder/task fires)
 
 ## Key Design Decisions
 
-- **Multiple agents, one app**: the `agents` table supports multiple agent definitions, each with its own system prompt, tools, functions, libraries, skills, UI components, state, sessions, projects, MCP servers, and scheduled tasks. A fresh install creates a single `default` agent. Secrets are global (user-level, not agent-level). Each agent gets its own `agent_data_{id}.db`.
+- **Multiple agents, one app**: the `agents` table supports multiple agent definitions, each with its own system prompt, tools, functions, libraries, skills, UI components, state, sessions, MCP servers, and scheduled tasks. A fresh install creates a single `default` agent. Secrets are global (user-level, not agent-level). Each agent gets its own `agent_data_{id}.db`.
 - **App DB vs agent DBs**: app internals (`metaclaw.db`) and agent data (`agent_data_{id}.db`) are completely separate. The agent can never read or modify its own session history, tools table, or config — only through the meta-tools.
 - **Dynamic tool set per step**: `getTools()` queries the database and MCP clients each time. Tool creation and MCP server connections take effect immediately on the next LLM call.
 - **MCP for external integrations**: agents extend their capabilities by connecting MCP servers rather than building everything from scratch in the sandbox. The Vercel AI SDK handles protocol details. See [MCP](./MCP.md).
@@ -388,8 +365,7 @@ Emitters:
 - **Libraries enable code reuse**: tools and functions are thin wrappers; shared logic lives in libraries loaded via `require()`. See [Sandbox Runtime](./Sandbox%20Runtime.md).
 - **Reminders vs scheduled tasks**: reminders are session-scoped and one-shot (wake an existing session). Scheduled tasks are system-level (create fresh sessions each firing). See [Built-in Tools](./Built-in%20Tools.md#reminders) for details.
 - **Files on disk, metadata in SQLite**: files are stored in `files/` on disk (can be 10–50 MB) with metadata in `agent_files`. Format-specific operations (spreadsheet, PDF, image) run server-side via ExcelJS, pdf-lib, sharp — the sandbox gets proxy stubs. See [Files](./Files.md).
-- **Files are scoped, not global**: files belong to a session, project, or the agent. Files uploaded in a conversation are session-scoped by default (invisible to other sessions). When a session becomes a project, its files promote to project scope. See [Files — File Scoping](./Files.md#file-scoping).
-- **Projects are lightweight data scopes, not agents**: a project shares the parent agent's tools, libraries, functions, skills, and capabilities. It scopes files and state to a specific purpose and adds context instructions to the system prompt. Projects are created organically — start a session, work on something, decide to save it as a project later. See `agent_projects`.
+- **Files are scoped**: files belong to a session or the agent globally. Files uploaded in a conversation are session-scoped by default (invisible to other sessions). See [Files — File Scoping](./Files.md#file-scoping).
 - **Skills for structured knowledge**: discrete markdown documents with name + description for selective loading. The agent appends quick facts to its system prompt; procedures and domain knowledge become skills. See [Skills](./Skills.md).
 - **Session notepad survives compaction**: per-session freeform scratchpad stored on the session row, included in the system prompt every turn. Pre-compaction warning gives the agent a chance to save working state. See [Session Notepad](./Session%20Notepad.md).
 - **No iframe sandbox for UI**: personal-use app — agent components run directly in the React tree. Error boundaries are the only safety net.
