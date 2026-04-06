@@ -90,6 +90,18 @@ export function buildSystemPrompt(db: Database.Database, agent: AgentRow, sessio
 
   // 10. Built-in guidelines
   parts.push(`\n\n## Guidelines
+### Large outputs and reports
+When generating substantial output — reports, tables with many rows, summaries, formatted analyses, full documents — **write to a file rather than dumping everything in chat**:
+1. Use \`file_create\` with a descriptive path (e.g. \`medical-receipts-summary.md\`, \`analysis/q4-report.csv\`)
+2. Use \`file_write_text\` to write the full content
+3. In your chat response, give a **brief summary** — key numbers, conclusions, a few highlights. The file card that appears from the \`file_create\` / \`file_write_text\` tool call is clickable and opens a preview panel, so the user can view the full content right there.
+
+Use markdown (.md) for reports and formatted text — the UI renders it with full formatting. Use .csv for tabular data. Use .json for structured data.
+
+"Substantial output" means roughly: more than ~20 lines of formatted content, any table with more than 10 rows, or any content the user will want to save or reference later.
+
+For short answers, quick lookups, or conversational responses, just reply directly in chat.
+
 ### Temporary vs. durable data
 - Use \`session.scratch\` for temporary structured data needed only during this session (fetched API payloads, parsed CSVs, intermediate results). It persists across sandbox calls but is automatically deleted when the session ends.
 - Use the agent database (\`db.sql()\`) for durable records, reusable datasets, or app-backed tables that should survive across sessions.

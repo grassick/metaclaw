@@ -97,6 +97,9 @@ interface AppStore {
   // UI
   showSettings: boolean
   toggleSettings: () => void
+  previewFile: { id: string; path: string; mime_type: string | null } | null
+  openFilePreview: (id: string, path: string, mime_type: string | null) => void
+  closeFilePreview: () => void
 
   // SSE
   sseClient: SSEClient | null
@@ -127,6 +130,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   sessionStatus: "idle",
   pendingAttachments: [],
   showSettings: false,
+  previewFile: null,
   sseClient: null,
   sseConnected: false,
   fallbackPollId: null,
@@ -252,6 +256,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   toggleSettings() {
     set((s) => ({ showSettings: !s.showSettings }))
+  },
+  openFilePreview(id: string, path: string, mime_type: string | null) {
+    set({ previewFile: { id, path, mime_type }, showSettings: false })
+  },
+  closeFilePreview() {
+    set({ previewFile: null })
   },
 
   // ── SSE ──

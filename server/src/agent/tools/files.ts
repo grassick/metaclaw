@@ -108,7 +108,7 @@ export function createFileTools(ctx: MetaToolContext) {
 
         eventBus.broadcast("file:modified", { id, path: row.path, size: stat.size, modified_on: now })
 
-        return { ok: true, size: stat.size }
+        return { ok: true, id, path: row.path, scope: row.session_id ? "session" : "agent", size: stat.size, mime_type: row.mime_type }
       },
     }),
 
@@ -191,7 +191,7 @@ export function createFileTools(ctx: MetaToolContext) {
           scope: resultScope, session_id: fileSessionId, source_session_id: sessionId,
         })
 
-        return { id: fileId, path: filePath, scope: resultScope }
+        return { id: fileId, path: filePath, scope: resultScope, size: stat.size, mime_type: mimeType }
       },
     }),
 

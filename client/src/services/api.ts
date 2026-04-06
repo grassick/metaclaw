@@ -134,6 +134,12 @@ export const api = {
     return res.json()
   },
   getFileDownloadUrl: (id: string) => `${BASE}/files/${id}/download`,
+  getFileViewUrl: (id: string) => `${BASE}/files/${id}/view`,
+  getFileContent: async (id: string): Promise<string> => {
+    const res = await fetch(`${BASE}/files/${id}/view`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.text()
+  },
   deleteFile: (id: string) => del<{ deleted: boolean }>(`${BASE}/files/${id}`),
   promoteFile: (id: string) => post<FileEntry>(`${BASE}/files/${id}/promote`, {}),
 

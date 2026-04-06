@@ -140,6 +140,16 @@
   min-width: 60px;
 }
 
+/* ── File preview panel ───────────────────────────────────────────── */
+
+.file-preview-panel {
+  width: min(50vw, 700px);
+  min-width: 340px;
+  max-width: 50vw;
+  height: 100%;
+  background: var(--bs-body-bg);
+}
+
 /* ── Settings drawer overlay ──────────────────────────────────────── */
 
 .settings-overlay {

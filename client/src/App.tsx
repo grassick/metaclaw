@@ -4,6 +4,7 @@ import { api } from "./services/api"
 import SessionSidebar from "./components/SessionSidebar"
 import ChatPanel from "./components/ChatPanel"
 import SettingsPanel from "./components/SettingsPanel"
+import FilePreview from "./components/FilePreview"
 
 export default function App() {
   const loadAgents = useAppStore((s) => s.loadAgents)
@@ -11,6 +12,7 @@ export default function App() {
   const initSSE = useAppStore((s) => s.initSSE)
   const showSettings = useAppStore((s) => s.showSettings)
   const toggleSettings = useAppStore((s) => s.toggleSettings)
+  const previewFile = useAppStore((s) => s.previewFile)
   const agents = useAppStore((s) => s.agents)
   const activeAgentId = useAppStore((s) => s.activeAgentId)
   const setActiveAgent = useAppStore((s) => s.setActiveAgent)
@@ -79,6 +81,7 @@ export default function App() {
         <main className="flex-grow-1 overflow-hidden">
           <ChatPanel />
         </main>
+        {previewFile && <FilePreview />}
       </div>
 
       {/* Settings drawer */}

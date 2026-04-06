@@ -131,6 +131,20 @@ export function createFileRoutes(db: Database.Database): Router {
     fs.createReadStream(diskPath).pipe(res)
   })
 
+  router.get("/:id/view", (req, res) => {
+    const row = db.prepare("SELECT * FROM agent_files WHERE _id = ?").get(req.params.id) as FileRow | undefined
+    if (!row) return res.status(404).json({ error: "File not found" })
+
+    const diskPath = path.join(FILES_DIR, row.disk_path)
+    if (!fs.existsSync(diskPath)) return res.status(404).json({ error: "File missing from disk" })
+
+    const filename = path.basename(row.path)
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`)
+    if (row.mime_type) res.setHeader("Content-Type", row.mime_type)
+    res.setHeader("Content-Length", row.size)
+    fs.createReadStream(diskPath).pipe(res)
+  })
+
   router.get("/", (req, res) => {
     const agentId = req.query.agent_id as string ?? "default"
     const sessionId = req.query.session_id as string | undefined

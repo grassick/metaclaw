@@ -96,6 +96,62 @@ function parseMessages(messages: unknown[]): DisplayItem[] {
 
 // ── Sub-components ───────────────────────────────────────────────────
 
+const FILE_ICONS: Record<string, string> = {
+  "text/markdown": "📝",
+  "text/plain": "📄",
+  "text/csv": "📊",
+  "text/html": "🌐",
+  "application/json": "📋",
+  "application/pdf": "📕",
+  "image/": "🖼️",
+}
+
+function fileIcon(mimeType?: string): string {
+  if (!mimeType) return "📄"
+  for (const [prefix, icon] of Object.entries(FILE_ICONS)) {
+    if (mimeType.startsWith(prefix)) return icon
+  }
+  return "📄"
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+interface FileResult {
+  id?: string
+  path?: string
+  scope?: string
+  size?: number
+  mime_type?: string
+}
+
+function FileCard({ result }: { result: unknown }) {
+  const openFilePreview = useAppStore((s) => s.openFilePreview)
+  const r = result as FileResult | null
+  if (!r?.id || !r?.path) return null
+  const filename = r.path.split("/").pop() ?? r.path
+  const icon = fileIcon(r.mime_type)
+  return (
+    <div className="mb-2 ms-2">
+      <div
+        className="d-inline-flex align-items-center gap-2 rounded border px-3 py-2 bg-body-secondary small"
+        style={{ cursor: "pointer" }}
+        onClick={() => openFilePreview(r.id!, r.path!, r.mime_type ?? null)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter") openFilePreview(r.id!, r.path!, r.mime_type ?? null) }}
+      >
+        <span>{icon}</span>
+        <span className="text-body fw-medium">{filename}</span>
+        {r.size != null && <span className="text-muted">{formatBytes(r.size)}</span>}
+      </div>
+    </div>
+  )
+}
+
 function UserMessage({ content }: { content: string }) {
   return (
     <div className="d-flex justify-content-end mb-3">
@@ -119,6 +175,12 @@ function AssistantText({ content, streaming }: { content: string; streaming?: bo
 
 function ToolCallBlock({ item }: { item: DisplayItem }) {
   const isComplete = item.result !== undefined
+
+  if ((item.toolName === "file_create" || item.toolName === "file_write_text") && isComplete) {
+    const r = item.result as FileResult | null
+    if (r?.id && r?.path) return <FileCard result={item.result} />
+  }
+
   return (
     <div className="mb-2 ms-2">
       <details className="tool-call-block">
@@ -164,6 +226,11 @@ function StreamingSegments({ segments }: { segments: StreamSegment[] }) {
         if (seg.name === "send_message" && seg.args) {
           const text = (seg.args as Record<string, unknown>).text as string | undefined
           if (text) return <AssistantText key={`stream-${i}`} content={text} />
+        }
+
+        if ((seg.name === "file_create" || seg.name === "file_write_text") && seg.status === "complete" && seg.result) {
+          const r = seg.result as FileResult | null
+          if (r?.id && r?.path) return <FileCard key={`stream-${i}`} result={seg.result} />
         }
 
         const isComplete = seg.status === "complete"
