@@ -15,10 +15,9 @@ export function createEventRoutes(): Router {
     const client = { id: crypto.randomUUID(), res, remoteAddress: req.ip }
     eventBus.addSSEClient(client)
 
-    // Send a heartbeat every 30s to keep the connection alive
     const heartbeat = setInterval(() => {
       res.write(": heartbeat\n\n")
-    }, 30000)
+    }, 15000)
 
     req.on("close", () => {
       clearInterval(heartbeat)

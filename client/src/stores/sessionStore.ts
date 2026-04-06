@@ -2,6 +2,27 @@ import { create } from "zustand"
 import { api, type Agent, type Session, type FileEntry } from "../services/api"
 import { SSEClient } from "../services/sse"
 
+const FILE_REF_PATTERN = /\[file:\s+\S+\s+"([^"]+)"\]/g
+
+function sanitizeMessagesForDisplay(messages: any[]): any[] {
+  return messages.map((msg) => {
+    if (msg.role !== "user" || typeof msg.content !== "string") return msg
+    if (!msg.content.includes("[file:")) return msg
+
+    const cleaned = msg.content.replace(
+      /\n\nAttached files:\s*((?:\[file:\s+\S+\s+"[^"]+"\]\s*)+)/,
+      (_match: string, refs: string) => {
+        const paths: string[] = []
+        let m: RegExpExecArray | null
+        const re = new RegExp(FILE_REF_PATTERN.source, "g")
+        while ((m = re.exec(refs)) !== null) paths.push(m[1])
+        return paths.length > 0 ? `\n\n📎 ${paths.join(", ")}` : ""
+      },
+    )
+    return { ...msg, content: cleaned }
+  })
+}
+
 // ── Display model for streaming ──────────────────────────────────────
 
 export interface StreamSegment {
@@ -138,7 +159,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     set({ activeSessionId: id, messages: [], streamSegments: [], pendingInput: null })
     try {
-      const [messages, session] = await Promise.all([api.getMessages(id), api.getSession(id)])
+      const [rawMessages, session] = await Promise.all([api.getMessages(id), api.getSession(id)])
+      const messages = sanitizeMessagesForDisplay(rawMessages)
       const pendingInput = getPendingInput(session)
       set({ messages, sessionStatus: session.status, pendingInput })
       if (session.status === "running") {
@@ -190,12 +212,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!activeSessionId) return
 
     let messageContent = content
+    let displayContent = content
     if (pendingAttachments.length > 0) {
       const fileRefs = pendingAttachments.map((f) => `[file: ${f.id} "${f.path}"]`).join(" ")
       messageContent = `${content}\n\nAttached files: ${fileRefs}`
+      const displayRefs = pendingAttachments.map((f) => f.path).join(", ")
+      displayContent = content ? `${content}\n\n📎 ${displayRefs}` : `📎 ${displayRefs}`
     }
 
-    const userMsg = { role: "user", content: messageContent }
+    const userMsg = { role: "user", content: displayContent }
     set((s) => ({
       messages: [...s.messages, userMsg],
       streamSegments: [],
@@ -243,19 +268,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setSSEConnected(connected: boolean) {
-    const { sseConnected, sessionStatus } = get()
+    const { sseConnected } = get()
     if (sseConnected === connected) return
 
     set({ sseConnected: connected })
 
     if (connected) {
-      console.info("SSE connected")
+      console.info("SSE reconnected — syncing state")
+      get()._syncActiveSession()
       return
     }
 
     console.warn("SSE disconnected")
+    const { sessionStatus } = get()
     if (sessionStatus === "running") {
-      console.warn("SSE disconnected during active run; polling will keep the session in sync")
       get()._startFallbackPolling()
     }
   },
@@ -397,14 +423,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!activeSessionId) return
 
     try {
-      const [messages, session] = await Promise.all([
+      const [rawMessages, session] = await Promise.all([
         api.getMessages(activeSessionId),
         api.getSession(activeSessionId),
       ])
       if (get().activeSessionId !== activeSessionId) return
 
       set({
-        messages,
+        messages: sanitizeMessagesForDisplay(rawMessages),
         sessionStatus: session.status,
         pendingInput: getPendingInput(session),
         streamSegments: session.status === "running" ? get().streamSegments : [],
