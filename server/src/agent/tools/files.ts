@@ -5,38 +5,10 @@ import fs from "node:fs"
 import type { MetaToolContext } from "../types"
 import { generateFileId } from "../../utils/fileId"
 import { eventBus } from "../../events"
-
-const FILES_DIR = path.join(process.cwd(), "data", "files")
-
-interface FileRow {
-  _id: string
-  agent_id: string
-  path: string
-  mime_type: string | null
-  size: number
-  disk_path: string
-  session_id: string | null
-  source: string
-  source_session_id: string | null
-  created_on: string
-  modified_on: string
-}
-
-function deriveScope(row: FileRow): string {
-  return row.session_id ? "session" : "agent"
-}
-
-function fileToResult(row: FileRow) {
-  return {
-    id: row._id,
-    path: row.path,
-    size: row.size,
-    mime_type: row.mime_type,
-    scope: deriveScope(row),
-    session_id: row.session_id,
-    modified_on: row.modified_on,
-  }
-}
+import {
+  FILES_DIR, type FileRow,
+  deriveScope, fileToResult, getVisibleFile, getDiskPath, validatePath, ensureFilesDir,
+} from "./file-utils"
 
 function visibleFilesQuery(agentId: string, sessionId: string, db: any, scope?: string) {
   if (scope === "session") {
@@ -52,24 +24,6 @@ function visibleFilesQuery(agentId: string, sessionId: string, db: any, scope?: 
   return db.prepare(
     "SELECT * FROM agent_files WHERE agent_id = ? AND (session_id = ? OR session_id IS NULL) ORDER BY path"
   ).all(agentId, sessionId) as FileRow[]
-}
-
-function getVisibleFile(db: any, fileId: string, agentId: string, sessionId: string): FileRow | undefined {
-  const row = db.prepare("SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?").get(fileId, agentId) as FileRow | undefined
-  if (!row) return undefined
-  if (row.session_id && row.session_id !== sessionId) return undefined
-  return row
-}
-
-function validatePath(p: string): string | null {
-  if (!p || p.startsWith("/")) return "Path must not start with /"
-  if (p.includes("..")) return "Path must not contain .."
-  if (p.includes("\\")) return "Path must not contain backslashes"
-  return null
-}
-
-function getDiskPath(row: FileRow): string {
-  return path.join(FILES_DIR, row.disk_path)
 }
 
 function readFileLines(diskPath: string): string[] {

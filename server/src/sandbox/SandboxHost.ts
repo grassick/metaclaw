@@ -398,6 +398,170 @@ function buildGlobalFunctions(
   }
 
   // ====================================================================
+  // files.pdf.* (delegates to the same logic as the meta-tools)
+  // ====================================================================
+  const getFileRow = (id: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+    if (row.session_id && ctx.sessionId && row.session_id !== ctx.sessionId) {
+      throw new Error(`File not visible: ${id}`)
+    }
+    return row
+  }
+
+  const getFileDiskPath = (row: any) => {
+    const pathMod = require("node:path")
+    return pathMod.join(process.cwd(), "data", "files", row.disk_path)
+  }
+
+  fns._api_pdf_info = async (id: string) => {
+    const row = getFileRow(id)
+    const { PDFDocument } = await import("pdf-lib")
+    const bytes = (await import("node:fs")).readFileSync(getFileDiskPath(row))
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+    const pages = doc.getPages().map((p, i) => ({
+      page: i + 1, width: Math.round(p.getWidth()), height: Math.round(p.getHeight()),
+    }))
+    const form = doc.getForm()
+    return {
+      id: row._id, path: row.path, page_count: doc.getPageCount(), pages,
+      title: doc.getTitle() ?? null, author: doc.getAuthor() ?? null,
+      has_forms: form.getFields().length > 0, form_field_count: form.getFields().length,
+    }
+  }
+
+  fns._api_pdf_extract_text = async (id: string, options?: any) => {
+    const row = getFileRow(id)
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs")
+    const data = new Uint8Array((await import("node:fs")).readFileSync(getFileDiskPath(row)))
+    const doc = await pdfjs.getDocument({ data, useSystemFonts: true }).promise
+    const totalPages = doc.numPages
+    const targetPages = options?.pages ?? Array.from({ length: totalPages }, (_: any, i: number) => i + 1)
+    const results: { page: number; text: string }[] = []
+    for (const num of targetPages) {
+      if (num < 1 || num > totalPages) continue
+      const page = await doc.getPage(num)
+      const content = await page.getTextContent()
+      const text = content.items.filter((item: any) => "str" in item).map((item: any) => item.str).join("")
+      results.push({ page: num, text })
+    }
+    doc.destroy()
+    return { pages: results, total_pages: totalPages }
+  }
+
+  fns._api_pdf_page_to_image = async (id: string, pageNum: number, options?: any) => {
+    const row = getFileRow(id)
+    const { renderPdfPageToPng } = await import("../agent/tools/pdf")
+    const { createDerivedFile } = await import("../agent/tools/file-utils")
+    const pathMod = await import("node:path")
+
+    const dpi = options?.dpi ?? 150
+    const pngBuffer = await renderPdfPageToPng(getFileDiskPath(row), pageNum, dpi)
+    const baseName = pathMod.basename(row.path, pathMod.extname(row.path))
+    const dir = pathMod.dirname(row.path) === "." ? "" : pathMod.dirname(row.path) + "/"
+    const derivedPath = `${dir}${baseName}_page${pageNum}.png`
+    const newFile = createDerivedFile(ctx.appDb, ctx.agentId, ctx.sessionId ?? "", derivedPath, "image/png", pngBuffer)
+    return { id: newFile._id, path: newFile.path, size: newFile.size }
+  }
+
+  fns._api_pdf_get_form_fields = async (id: string) => {
+    const row = getFileRow(id)
+    const { PDFDocument } = await import("pdf-lib")
+    const bytes = (await import("node:fs")).readFileSync(getFileDiskPath(row))
+    const doc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+    const form = doc.getForm()
+    const fields = form.getFields().map(field => {
+      const type = field.constructor.name.replace("PDF", "").replace("Field", "").toLowerCase()
+      let value: any = null
+      try {
+        if ("getText" in field) value = (field as any).getText()
+        else if ("isChecked" in field) value = (field as any).isChecked()
+        else if ("getSelected" in field) value = (field as any).getSelected()
+      } catch {}
+      return { name: field.getName(), type, value, read_only: field.isReadOnly() }
+    })
+    return { fields, count: fields.length }
+  }
+
+  fns._api_pdf_fill_form = async (id: string, fieldValues: Record<string, string>, options?: any) => {
+    const row = getFileRow(id)
+    const { PDFDocument } = await import("pdf-lib")
+    const fsMod = await import("node:fs")
+    const bytes = fsMod.readFileSync(getFileDiskPath(row))
+    const doc = await PDFDocument.load(bytes)
+    const form = doc.getForm()
+    const filled: string[] = []
+    const errors: { field: string; error: string }[] = []
+    for (const [name, value] of Object.entries(fieldValues)) {
+      try {
+        const field = form.getFieldMaybe(name)
+        if (!field) { errors.push({ field: name, error: "Field not found" }); continue }
+        const typeName = field.constructor.name
+        if (typeName.includes("Text")) (field as any).setText(value)
+        else if (typeName.includes("CheckBox")) {
+          if (value === "true" || value === "1" || value === "yes") (field as any).check()
+          else (field as any).uncheck()
+        } else if (typeName.includes("Dropdown") || typeName.includes("OptionList")) (field as any).select(value)
+        else if (typeName.includes("RadioGroup")) (field as any).select(value)
+        else { errors.push({ field: name, error: `Unsupported type: ${typeName}` }); continue }
+        filled.push(name)
+      } catch (e: any) { errors.push({ field: name, error: e.message }) }
+    }
+    if (options?.flatten) form.flatten()
+    const saved = await doc.save()
+    fsMod.writeFileSync(getFileDiskPath(row), saved)
+    const now = new Date().toISOString()
+    ctx.appDb.prepare("UPDATE agent_files SET size = ?, modified_on = ? WHERE _id = ?").run(saved.length, now, id)
+    return { filled, errors, filled_count: filled.length, error_count: errors.length }
+  }
+
+  fns._api_pdf_merge = async (ids: string[], outputPath: string) => {
+    const { PDFDocument } = await import("pdf-lib")
+    const fsMod = await import("node:fs")
+    const { createDerivedFile } = await import("../agent/tools/file-utils")
+    const merged = await PDFDocument.create()
+    for (const id of ids) {
+      const row = getFileRow(id)
+      const bytes = fsMod.readFileSync(getFileDiskPath(row))
+      const src = await PDFDocument.load(bytes)
+      const pages = await merged.copyPages(src, src.getPageIndices())
+      for (const page of pages) merged.addPage(page)
+    }
+    const saved = await merged.save()
+    const newFile = createDerivedFile(ctx.appDb, ctx.agentId, ctx.sessionId ?? "", outputPath, "application/pdf", Buffer.from(saved))
+    return { id: newFile._id, path: newFile.path, page_count: merged.getPageCount(), size: newFile.size }
+  }
+
+  fns._api_pdf_split_pages = async (id: string, ranges: { start: number; end: number }[]) => {
+    const { PDFDocument } = await import("pdf-lib")
+    const fsMod = await import("node:fs")
+    const pathMod = await import("node:path")
+    const { createDerivedFile } = await import("../agent/tools/file-utils")
+    const row = getFileRow(id)
+    const bytes = fsMod.readFileSync(getFileDiskPath(row))
+    const src = await PDFDocument.load(bytes)
+    const results: any[] = []
+    for (const { start, end } of ranges) {
+      if (start < 1 || end > src.getPageCount() || start > end) {
+        throw new Error(`Invalid range ${start}-${end} (PDF has ${src.getPageCount()} pages)`)
+      }
+      const newDoc = await PDFDocument.create()
+      const indices = Array.from({ length: end - start + 1 }, (_, j) => start - 1 + j)
+      const pages = await newDoc.copyPages(src, indices)
+      for (const page of pages) newDoc.addPage(page)
+      const saved = await newDoc.save()
+      const baseName = pathMod.basename(row.path, pathMod.extname(row.path))
+      const dir = pathMod.dirname(row.path) === "." ? "" : pathMod.dirname(row.path) + "/"
+      const splitPath = `${dir}${baseName}_pages${start}-${end}.pdf`
+      const newFile = createDerivedFile(ctx.appDb, ctx.agentId, ctx.sessionId ?? "", splitPath, "application/pdf", Buffer.from(saved))
+      results.push({ id: newFile._id, path: newFile.path, pages: `${start}-${end}`, size: newFile.size })
+    }
+    return { files: results }
+  }
+
+  // ====================================================================
   // skills.* (read-only)
   // ====================================================================
   fns._api_skills_list = async (tag?: string) => {
@@ -585,6 +749,15 @@ const files = {
   promote: async (id) => { await _api_files_promoteAsync(id); },
   readText: async (id, options) => _api_files_read_textAsync(id, options || {}),
   writeText: async (id, content) => { await _api_files_write_textAsync(id, content); },
+  pdf: {
+    info: async (id) => _api_pdf_infoAsync(id),
+    extractText: async (id, options) => _api_pdf_extract_textAsync(id, options || {}),
+    pageToImage: async (id, pageNum, options) => _api_pdf_page_to_imageAsync(id, pageNum, options || {}),
+    getFormFields: async (id) => _api_pdf_get_form_fieldsAsync(id),
+    fillForm: async (id, fields, options) => _api_pdf_fill_formAsync(id, fields, options || {}),
+    merge: async (ids, outputPath) => _api_pdf_mergeAsync(ids, outputPath),
+    splitPages: async (id, ranges) => _api_pdf_split_pagesAsync(id, ranges),
+  },
 };
 
 const skills = {

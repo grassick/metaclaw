@@ -13,6 +13,8 @@ import { createUIComponentTools } from "./ui-components"
 import { createSkillTools } from "./skills"
 import { createNetworkTools } from "./network"
 import { createAgentForkTools } from "./agent-fork"
+import { createPdfTools } from "./pdf"
+import { createFileViewTools } from "./file-view"
 
 export type { MetaToolContext }
 
@@ -30,6 +32,8 @@ export function createAllTools(ctx: MetaToolContext): ToolSet {
     ...createLlmTools(ctx),
     ...createCodeExecutionTools(ctx),
     ...createFileTools(ctx),
+    ...createPdfTools(ctx),
+    ...createFileViewTools(ctx),
     ...createUIComponentTools(ctx),
     ...createSkillTools(ctx),
     ...createNetworkTools(ctx),

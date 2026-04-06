@@ -1,26 +1,24 @@
 # Metaclaw — Remaining Implementation Phases
 
-Phases A, B, and H have been implemented. The following phases remain.
+Phases A, B, and H have been implemented. Phase C (PDF + file_view) is partially done. The following phases remain.
 
 ---
 
-## Phase C: Format-Specific File APIs
+## Phase C (remaining): Spreadsheet, Image, and Zip APIs
 
-Heavy deps, high value for the "do my taxes" use case.
+PDF tools (11 meta-tools + `file_view` + sandbox `files.pdf.*`) are implemented. What remains:
 
-**Server deps:** `exceljs`, `pdf-lib`, `pdfjs-dist`, `sharp`, `yauzl`, `canvas`
+**Server deps (not yet installed):** `exceljs`, `yauzl`
 
-**Sandbox** — add `files.spreadsheet.*`, `files.pdf.*`, `files.image.*` proxy stubs.
+**Sandbox** — add `files.spreadsheet.*`, `files.image.*` proxy stubs.
 
-**Meta-tools** (new files `server/src/agent/tools/spreadsheet.ts`, `pdf.ts`, `image.ts`):
+**Meta-tools** (new files `server/src/agent/tools/spreadsheet.ts`, `image.ts`):
 - 12 spreadsheet tools (`spreadsheet_list_sheets` through `spreadsheet_auto_filter`)
-- 11 PDF tools (`pdf_info` through `pdf_split_pages`, plus `pdf_page_to_image`)
 - 6 image tools (`image_info` through `image_to_base64`)
-- 1 cross-format tool: `file_view` — loads image or PDF page(s) into the main LLM context as vision input. Returns multi-part content (image content parts) in the tool result so the main LLM sees the visual content inline. Uses `pdfjs-dist` + `canvas` for PDF page rendering. Essential for scanned PDFs.
 
 **Zip extraction:** when `extract=true` on upload and MIME is `application/zip`, use `yauzl` to expand into individual `agent_files` rows preserving internal paths.
 
-**Effort:** Large
+**Effort:** Medium
 
 ---
 
