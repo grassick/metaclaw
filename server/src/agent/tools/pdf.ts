@@ -469,6 +469,18 @@ function updateFileSize(db: any, row: FileRow, newSize: number) {
  * No native Node addons required — just shells out to the system binary.
  */
 export async function renderPdfPageToPng(diskPath: string, pageNum: number, dpi: number): Promise<Buffer> {
+  return renderPdfPage(diskPath, pageNum, dpi, "png")
+}
+
+/**
+ * Render a single PDF page to JPEG using pdftoppm (Poppler).
+ * Much smaller output than PNG for scanned/photographic documents.
+ */
+export async function renderPdfPageToJpeg(diskPath: string, pageNum: number, dpi: number): Promise<Buffer> {
+  return renderPdfPage(diskPath, pageNum, dpi, "jpeg")
+}
+
+async function renderPdfPage(diskPath: string, pageNum: number, dpi: number, format: "png" | "jpeg"): Promise<Buffer> {
   const { execFile } = await import("node:child_process")
   const { promisify } = await import("node:util")
   const execFileAsync = promisify(execFile)
@@ -477,10 +489,12 @@ export async function renderPdfPageToPng(diskPath: string, pageNum: number, dpi:
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
 
   const outPrefix = path.join(tmpDir, `page_${Date.now()}`)
+  const formatFlag = format === "jpeg" ? "-jpeg" : "-png"
+  const ext = format === "jpeg" ? ".jpg" : ".png"
 
   try {
     await execFileAsync("pdftoppm", [
-      "-png",
+      formatFlag,
       "-r", String(dpi),
       "-f", String(pageNum),
       "-l", String(pageNum),
@@ -495,12 +509,12 @@ export async function renderPdfPageToPng(diskPath: string, pageNum: number, dpi:
     throw new Error(`pdftoppm failed: ${err.stderr || err.message}`)
   }
 
-  const outFile = outPrefix + ".png"
+  const outFile = outPrefix + ext
   if (!fs.existsSync(outFile)) {
     throw new Error(`pdftoppm produced no output — page ${pageNum} may be out of range`)
   }
 
-  const pngBuffer = fs.readFileSync(outFile)
+  const buffer = fs.readFileSync(outFile)
   fs.unlinkSync(outFile)
-  return pngBuffer
+  return buffer
 }

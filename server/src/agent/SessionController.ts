@@ -205,7 +205,7 @@ export class SessionController {
         `[agent] steps=${steps.length} tokens in=${totalUsage?.inputTokens ?? "?"} out=${totalUsage?.outputTokens ?? "?"} total=${totalUsage?.totalTokens ?? 0}${costPart} responseMessages=${responseMessages.length}`,
       )
 
-      const allMessages = [...messages, ...responseMessages]
+      const allMessages = stripImageDataFromMessages([...messages, ...responseMessages])
 
       // Detect pending tool calls (pausing tools like ask_user that have no execute)
       const lastStep = steps[steps.length - 1]
@@ -279,9 +279,36 @@ export class SessionController {
 }
 
 function truncateForSSE(value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>
+    if ("_image_parts" in obj) {
+      const { _image_parts, ...rest } = obj
+      return rest
+    }
+  }
   const str = typeof value === "string" ? value : JSON.stringify(value)
   if (str && str.length > 500) return str.slice(0, 500) + "…"
   return value
+}
+
+/**
+ * Walk saved messages and replace inline image-data parts with lightweight
+ * text placeholders so base64 blobs are not re-sent on subsequent LLM calls.
+ */
+function stripImageDataFromMessages(messages: unknown[]): unknown[] {
+  return JSON.parse(JSON.stringify(messages), (_key, value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const obj = value as Record<string, unknown>
+      if (
+        (obj.type === "image-data" || obj.type === "image") &&
+        typeof obj.data === "string" &&
+        (obj.data as string).length > 200
+      ) {
+        return { type: "text", text: "[Image was viewed — not retained in conversation history. Call file_view again to re-examine.]" }
+      }
+    }
+    return value
+  })
 }
 
 function toToolResultOutput(value: unknown): ToolResultPart["output"] {

@@ -173,6 +173,16 @@ function AssistantText({ content, streaming }: { content: string; streaming?: bo
   )
 }
 
+function sanitizeToolResult(result: unknown): unknown {
+  if (!result || typeof result !== "object") return result
+  const obj = result as Record<string, unknown>
+  if ("_image_parts" in obj) {
+    const { _image_parts, ...rest } = obj
+    return rest
+  }
+  return result
+}
+
 function ToolCallBlock({ item }: { item: DisplayItem }) {
   const isComplete = item.result !== undefined
 
@@ -180,6 +190,8 @@ function ToolCallBlock({ item }: { item: DisplayItem }) {
     const r = item.result as FileResult | null
     if (r?.id && r?.path) return <FileCard result={item.result} />
   }
+
+  const displayResult = isComplete ? sanitizeToolResult(item.result) : undefined
 
   return (
     <div className="mb-2 ms-2">
@@ -201,11 +213,11 @@ function ToolCallBlock({ item }: { item: DisplayItem }) {
               </code>
             </div>
           )}
-          {isComplete && (
+          {displayResult !== undefined && (
             <div>
               <span className="text-muted">Result: </span>
               <code className="d-block bg-body-secondary rounded p-1 mt-1" style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
-                {typeof item.result === "string" ? item.result : JSON.stringify(item.result, null, 2)}
+                {typeof displayResult === "string" ? displayResult : JSON.stringify(displayResult, null, 2)}
               </code>
             </div>
           )}
@@ -254,14 +266,17 @@ function StreamingSegments({ segments }: { segments: StreamSegment[] }) {
                     </code>
                   </div>
                 )}
-                {isComplete && seg.result != null && (
-                  <div>
-                    <span className="text-muted">Result: </span>
-                    <code className="d-block bg-body-secondary rounded p-1 mt-1" style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
-                      {typeof seg.result === "string" ? seg.result : JSON.stringify(seg.result, null, 2)}
-                    </code>
-                  </div>
-                )}
+                {isComplete && seg.result != null && (() => {
+                  const display = sanitizeToolResult(seg.result)
+                  return (
+                    <div>
+                      <span className="text-muted">Result: </span>
+                      <code className="d-block bg-body-secondary rounded p-1 mt-1" style={{ whiteSpace: "pre-wrap", fontSize: "0.75rem" }}>
+                        {typeof display === "string" ? display : JSON.stringify(display, null, 2)}
+                      </code>
+                    </div>
+                  )
+                })()}
               </div>
             </details>
           </div>

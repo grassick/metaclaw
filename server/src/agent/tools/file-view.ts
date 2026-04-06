@@ -3,7 +3,7 @@ import { z } from "zod"
 import fs from "node:fs"
 import type { MetaToolContext } from "../types"
 import { getVisibleFile, getDiskPath } from "./file-utils"
-import { renderPdfPageToPng } from "./pdf"
+import { renderPdfPageToJpeg } from "./pdf"
 
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"])
 const MAX_PAGES = 5
@@ -11,10 +11,11 @@ const DEFAULT_MAX_WIDTH = 1024
 const DEFAULT_DPI = 150
 
 /**
- * Downscale a PNG/JPEG/WebP buffer so its width <= maxWidth.
- * Returns base64-encoded result and the output mediaType.
+ * Downscale any image buffer to JPEG with width <= maxWidth.
+ * Always outputs JPEG — vision models don't need lossless PNG,
+ * and JPEG is dramatically smaller for scanned/photographic content.
  */
-async function prepareImageBase64(buffer: Buffer, mime: string, maxWidth: number): Promise<{ data: string; mediaType: string }> {
+async function prepareImageBase64(buffer: Buffer, maxWidth: number): Promise<{ data: string; mediaType: string }> {
   const sharp = (await import("sharp")).default
   let pipeline = sharp(buffer)
   const meta = await pipeline.metadata()
@@ -23,12 +24,8 @@ async function prepareImageBase64(buffer: Buffer, mime: string, maxWidth: number
     pipeline = pipeline.resize({ width: maxWidth, withoutEnlargement: true })
   }
 
-  const outputMime = mime === "image/png" ? "image/png" : "image/jpeg"
-  const output = outputMime === "image/png"
-    ? await pipeline.png().toBuffer()
-    : await pipeline.jpeg({ quality: 85 }).toBuffer()
-
-  return { data: output.toString("base64"), mediaType: outputMime }
+  const output = await pipeline.jpeg({ quality: 82 }).toBuffer()
+  return { data: output.toString("base64"), mediaType: "image/jpeg" }
 }
 
 export function createFileViewTools(ctx: MetaToolContext) {
@@ -38,8 +35,9 @@ export function createFileViewTools(ctx: MetaToolContext) {
     file_view: tool({
       description:
         "Load an image or PDF page(s) into your context as vision input — the visual equivalent of file_read_text. " +
-        "For images, the file is loaded directly. For PDFs, each requested page is rendered to PNG first. " +
-        "Essential for scanned PDFs where pdf_extract_text returns empty text.",
+        "For images, the file is loaded directly. For PDFs, each requested page is rendered to JPEG first. " +
+        "Essential for scanned PDFs where pdf_extract_text returns empty text. " +
+        "Note: viewed images are not retained in conversation history — call file_view again if you need to re-examine.",
       inputSchema: z.object({
         id: z.string().describe("File ID (image or PDF)"),
         pages: z.array(z.number()).optional().describe("For PDFs: which pages to view (1-based). Omit for page 1 only. Max 5 pages."),
@@ -57,13 +55,13 @@ export function createFileViewTools(ctx: MetaToolContext) {
 
         if (IMAGE_MIMES.has(mime)) {
           const buffer = fs.readFileSync(getDiskPath(row))
-          const part = await prepareImageBase64(buffer, mime, maxWidth)
+          const part = await prepareImageBase64(buffer, maxWidth)
           imageParts.push(part)
         } else if (mime === "application/pdf") {
           const targetPages = pages?.slice(0, MAX_PAGES) ?? [1]
           for (const pageNum of targetPages) {
-            const pngBuffer = await renderPdfPageToPng(getDiskPath(row), pageNum, dpi ?? DEFAULT_DPI)
-            const part = await prepareImageBase64(pngBuffer, "image/png", maxWidth)
+            const jpegBuffer = await renderPdfPageToJpeg(getDiskPath(row), pageNum, dpi ?? DEFAULT_DPI)
+            const part = await prepareImageBase64(jpegBuffer, maxWidth)
             imageParts.push(part)
           }
         } else {

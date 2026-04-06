@@ -298,9 +298,69 @@ function FileBrowser() {
   )
 }
 
+// ── Danger Zone Tab ─────────────────────────────────────────────────
+
+function DangerZone({ onClose }: { onClose: () => void }) {
+  const activeAgentId = useAppStore((s) => s.activeAgentId)
+  const agents = useAppStore((s) => s.agents)
+  const setActiveAgent = useAppStore((s) => s.setActiveAgent)
+  const loadAgents = useAppStore((s) => s.loadAgents)
+  const [deleting, setDeleting] = useState(false)
+
+  const isDefault = activeAgentId === "default"
+  const agentName = agents.find((a) => a._id === activeAgentId)?.name ?? activeAgentId
+
+  const handleDelete = async () => {
+    if (isDefault) return
+    const confirmed = window.confirm(
+      `Permanently delete agent "${agentName}"?\n\nThis will remove all sessions, state, and files for this agent. This cannot be undone.`,
+    )
+    if (!confirmed) return
+
+    setDeleting(true)
+    try {
+      await api.deleteAgent(activeAgentId)
+      await loadAgents()
+      setActiveAgent("default")
+      onClose()
+    } catch (err) {
+      alert(`Failed to delete: ${err instanceof Error ? err.message : err}`)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  return (
+    <div>
+      <h6 className="text-danger">Danger Zone</h6>
+      <div className="border border-danger rounded p-3">
+        <div className="d-flex justify-content-between align-items-center">
+          <div>
+            <strong>Delete this agent</strong>
+            <p className="text-muted small mb-0">
+              Permanently remove <span className="font-monospace">{agentName}</span> and all its data.
+            </p>
+          </div>
+          <button
+            className="btn btn-danger btn-sm ms-3"
+            onClick={handleDelete}
+            disabled={isDefault || deleting}
+            title={isDefault ? "Cannot delete the default agent" : "Delete agent"}
+          >
+            {deleting ? "Deleting…" : "Delete Agent"}
+          </button>
+        </div>
+        {isDefault && (
+          <p className="text-muted small mt-2 mb-0">The default agent cannot be deleted.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main SettingsPanel ───────────────────────────────────────────────
 
-type Tab = "prompt" | "state" | "files"
+type Tab = "prompt" | "state" | "files" | "danger"
 
 export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("files")
@@ -338,12 +398,21 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               State
             </button>
           </li>
+          <li className="nav-item">
+            <button
+              className={`nav-link ${tab === "danger" ? "active text-danger" : "text-danger"}`}
+              onClick={() => setTab("danger")}
+            >
+              Danger
+            </button>
+          </li>
         </ul>
 
         <div className="p-3 flex-grow-1 overflow-auto">
           {tab === "files" && <FileBrowser />}
           {tab === "prompt" && <SystemPromptEditor />}
           {tab === "state" && <StateViewer />}
+          {tab === "danger" && <DangerZone onClose={onClose} />}
         </div>
       </div>
     </div>
