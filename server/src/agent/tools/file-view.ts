@@ -7,7 +7,7 @@ import { renderPdfPageToJpeg } from "./pdf"
 
 const IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"])
 const MAX_PAGES = 5
-const DEFAULT_MAX_WIDTH = 1024
+const DEFAULT_MAX_WIDTH = 768
 const DEFAULT_DPI = 150
 
 /**
@@ -67,6 +67,9 @@ export function createFileViewTools(ctx: MetaToolContext) {
         } else {
           return { error: `Unsupported file type for visual viewing: ${mime}. Use file_read_text for text files.` }
         }
+
+        const totalBytes = imageParts.reduce((sum, p) => sum + p.data.length, 0)
+        console.log(`[file_view] ${id} → ${imageParts.length} image(s), ~${Math.round(totalBytes / 1024)}KB base64`)
 
         return {
           pages_rendered: imageParts.length,

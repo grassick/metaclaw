@@ -164,6 +164,11 @@ export class SessionController {
         tools,
         stopWhen: stepCountIs(MAX_STEPS),
         abortSignal: abortController.signal,
+        experimental_include: { requestBody: false },
+        prepareStep({ stepNumber, messages: stepMessages }) {
+          if (stepNumber < 2) return {}
+          return { messages: stripImageDataFromMessages(stepMessages) as ModelMessage[] }
+        },
       })
 
       console.log(`[agent] iterating fullStream...`)

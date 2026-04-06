@@ -14,7 +14,7 @@ export function createLlmTools(ctx: MetaToolContext) {
 
   return {
     llm_generate: tool({
-      description: "Make a single LLM call for classification, extraction, summarization, translation, or batch processing. No tool access or conversation history — just prompt in, text out. For full agent loops, use sub-sessions instead. Default intelligence is 'low' (cheap/fast).",
+      description: "Make a single text-only LLM call for classification, extraction, summarization, translation, or batch processing. Text in, text out — no vision, no images, no tool access, no conversation history. Cannot see images from file_view; use file_view to inject images into your own context instead. For full agent loops, use sub-sessions. Default intelligence is 'low' (cheap/fast).",
       inputSchema: z.object({
         prompt: z.string().describe("The prompt to send to the LLM"),
         system: z.string().optional().describe("Optional system prompt for the call"),
