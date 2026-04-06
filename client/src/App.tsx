@@ -28,20 +28,18 @@ export default function App() {
       {/* Navbar */}
       <nav className="navbar navbar-expand navbar-dark bg-dark px-3 py-2">
         <span className="navbar-brand fw-bold me-4 mb-0">Metaclaw</span>
-        {agents.length > 1 && (
-          <select
-            className="form-select form-select-sm bg-dark text-light border-secondary me-3"
-            style={{ width: "auto" }}
-            value={activeAgentId}
-            onChange={(e) => setActiveAgent(e.target.value)}
-          >
-            {agents.map((a) => (
-              <option key={a._id} value={a._id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        )}
+        <select
+          className="form-select form-select-sm bg-dark text-light border-secondary me-3"
+          style={{ width: "auto" }}
+          value={activeAgentId}
+          onChange={(e) => setActiveAgent(e.target.value)}
+        >
+          {agents.map((a) => (
+            <option key={a._id} value={a._id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
         <div className="ms-auto">
           <button
             className="btn btn-sm btn-outline-secondary text-light border-secondary"

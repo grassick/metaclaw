@@ -9,6 +9,10 @@ const SSE_EVENT_TYPES = [
   "session:pending_input",
   "sessions:list",
   "state:change",
+  "file:created",
+  "file:modified",
+  "file:deleted",
+  "agents:list",
 ] as const
 
 export class SSEClient {

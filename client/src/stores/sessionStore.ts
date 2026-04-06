@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { api, type Agent, type Session } from "../services/api"
+import { api, type Agent, type Session, type FileEntry } from "../services/api"
 import { SSEClient } from "../services/sse"
 
 // ── Display model for streaming ──────────────────────────────────────
@@ -63,6 +63,11 @@ interface AppStore {
   pendingInput: PendingInput | null
   sessionStatus: string
 
+  // Files
+  pendingAttachments: FileEntry[]
+  uploadFiles: (files: File[]) => Promise<void>
+  removeAttachment: (id: string) => void
+
   // Actions
   sendMessage: (content: string) => Promise<void>
   respondToInput: (toolCallId: string, result: unknown) => Promise<void>
@@ -99,6 +104,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   streamSegments: [],
   pendingInput: null,
   sessionStatus: "idle",
+  pendingAttachments: [],
   showSettings: false,
   sseClient: null,
   sseConnected: false,
@@ -160,23 +166,46 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await get().loadSessions()
   },
 
+  // ── Files ──
+
+  async uploadFiles(files: File[]) {
+    const { activeAgentId, activeSessionId } = get()
+    if (!activeSessionId) return
+    try {
+      const uploaded = await api.uploadFiles(files, activeAgentId, activeSessionId)
+      set((s) => ({ pendingAttachments: [...s.pendingAttachments, ...uploaded] }))
+    } catch (err) {
+      console.error("File upload failed:", err)
+    }
+  },
+
+  removeAttachment(id: string) {
+    set((s) => ({ pendingAttachments: s.pendingAttachments.filter((f) => f.id !== id) }))
+  },
+
   // ── Messages ──
 
   async sendMessage(content: string) {
-    const { activeSessionId } = get()
+    const { activeSessionId, pendingAttachments } = get()
     if (!activeSessionId) return
 
-    // Optimistic: add user message locally
-    const userMsg = { role: "user", content }
+    let messageContent = content
+    if (pendingAttachments.length > 0) {
+      const fileRefs = pendingAttachments.map((f) => `[file: ${f.id} "${f.path}"]`).join(" ")
+      messageContent = `${content}\n\nAttached files: ${fileRefs}`
+    }
+
+    const userMsg = { role: "user", content: messageContent }
     set((s) => ({
       messages: [...s.messages, userMsg],
       streamSegments: [],
       pendingInput: null,
       sessionStatus: "running",
+      pendingAttachments: [],
     }))
     get()._startFallbackPolling()
 
-    await api.sendMessage(activeSessionId, content)
+    await api.sendMessage(activeSessionId, messageContent)
   },
 
   async respondToInput(toolCallId: string, result: unknown) {
@@ -320,8 +349,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
 
       case "state:change": {
-        // Used by settings panel — it polls or we could dispatch a custom event
         window.dispatchEvent(new CustomEvent("metaclaw:state-change", { detail: d }))
+        break
+      }
+
+      case "file:created":
+      case "file:modified":
+      case "file:deleted": {
+        window.dispatchEvent(new CustomEvent("metaclaw:file-change", { detail: { type, ...d } }))
+        break
+      }
+
+      case "agents:list": {
+        get().loadAgents()
         break
       }
     }

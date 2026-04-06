@@ -272,6 +272,163 @@ function buildGlobalFunctions(
   }
 
   // ====================================================================
+  // files.*
+  // ====================================================================
+  fns._api_files_list = async (pattern?: string) => {
+    const sessionId = ctx.sessionId
+    let rows: any[]
+    if (sessionId) {
+      rows = ctx.appDb.prepare(
+        "SELECT * FROM agent_files WHERE agent_id = ? AND (session_id = ? OR session_id IS NULL) ORDER BY path"
+      ).all(ctx.agentId, sessionId)
+    } else {
+      rows = ctx.appDb.prepare(
+        "SELECT * FROM agent_files WHERE agent_id = ? AND session_id IS NULL ORDER BY path"
+      ).all(ctx.agentId)
+    }
+
+    if (pattern) {
+      const re = globToRegex(pattern)
+      rows = rows.filter((r: any) => re.test(r.path))
+    }
+
+    return rows.map((r: any) => ({
+      id: r._id, path: r.path, size: r.size, mime_type: r.mime_type,
+      scope: r.session_id ? "session" : "agent", modified_on: r.modified_on,
+    }))
+  }
+
+  fns._api_files_info = async (id: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+    return {
+      id: row._id, path: row.path, size: row.size, mime_type: row.mime_type,
+      scope: row.session_id ? "session" : "agent",
+      session_id: row.session_id, source: row.source,
+      created_on: row.created_on, modified_on: row.modified_on,
+    }
+  }
+
+  fns._api_files_read_text = async (id: string, options?: any) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const diskPath = path.join(process.cwd(), "data", "files", row.disk_path)
+    const lines = fs.readFileSync(diskPath, "utf-8").split("\n")
+    const totalLines = lines.length
+
+    if (options?.startLine || options?.endLine) {
+      const s = (options.startLine ?? 1) - 1
+      const e = options.endLine ?? totalLines
+      return { content: lines.slice(Math.max(0, s), Math.min(totalLines, e)).join("\n"), totalLines }
+    }
+    return { content: lines.join("\n"), totalLines }
+  }
+
+  fns._api_files_write_text = async (id: string, content: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    const diskPath = path.join(process.cwd(), "data", "files", row.disk_path)
+    fs.writeFileSync(diskPath, content, "utf-8")
+    const stat = fs.statSync(diskPath)
+    const now = new Date().toISOString()
+    ctx.appDb.prepare("UPDATE agent_files SET size = ?, modified_on = ? WHERE _id = ?")
+      .run(stat.size, now, id)
+    return null
+  }
+
+  fns._api_files_create = async (filePath: string, mime?: string) => {
+    const { generateFileId } = await import("../utils/fileId")
+    const fs = await import("node:fs")
+    const pathMod = await import("node:path")
+
+    const fileId = generateFileId()
+    const ext = pathMod.extname(filePath)
+    const diskFilename = fileId + ext
+    const filesDir = pathMod.join(process.cwd(), "data", "files")
+    if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true })
+    const diskPath = pathMod.join(filesDir, diskFilename)
+    fs.writeFileSync(diskPath, "", "utf-8")
+
+    const now = new Date().toISOString()
+    const sessionId = ctx.sessionId ?? null
+    ctx.appDb.prepare(`
+      INSERT INTO agent_files (_id, agent_id, path, mime_type, size, disk_path, session_id, source, source_session_id, created_on, modified_on)
+      VALUES (?, ?, ?, ?, 0, ?, ?, 'created', ?, ?, ?)
+    `).run(fileId, ctx.agentId, filePath, mime ?? "text/plain", diskFilename, sessionId, sessionId, now, now)
+
+    return { id: fileId, path: filePath }
+  }
+
+  fns._api_files_delete = async (id: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+
+    ctx.appDb.prepare("DELETE FROM agent_files WHERE _id = ?").run(id)
+    const fs = await import("node:fs")
+    const path = await import("node:path")
+    try { fs.unlinkSync(path.join(process.cwd(), "data", "files", row.disk_path)) } catch {}
+    return null
+  }
+
+  fns._api_files_promote = async (id: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_files WHERE _id = ? AND agent_id = ?"
+    ).get(id, ctx.agentId) as any
+    if (!row) throw new Error(`File not found: ${id}`)
+    if (row.session_id) {
+      const now = new Date().toISOString()
+      ctx.appDb.prepare("UPDATE agent_files SET session_id = NULL, modified_on = ? WHERE _id = ?")
+        .run(now, id)
+    }
+    return null
+  }
+
+  // ====================================================================
+  // skills.* (read-only)
+  // ====================================================================
+  fns._api_skills_list = async (tag?: string) => {
+    let rows = ctx.appDb.prepare(
+      "SELECT _id, title, description, tags FROM agent_skills WHERE agent_id = ? AND enabled = 1 ORDER BY _id"
+    ).all(ctx.agentId) as { _id: string; title: string; description: string; tags: string }[]
+
+    if (tag) {
+      rows = rows.filter(r => {
+        const tags: string[] = JSON.parse(r.tags)
+        return tags.includes(tag)
+      })
+    }
+
+    return rows.map(r => ({
+      name: r._id, title: r.title, description: r.description, tags: JSON.parse(r.tags),
+    }))
+  }
+
+  fns._api_skills_read = async (name: string) => {
+    const row = ctx.appDb.prepare(
+      "SELECT * FROM agent_skills WHERE _id = ? AND agent_id = ?"
+    ).get(name, ctx.agentId) as any
+    if (!row) throw new Error(`Skill not found: ${name}`)
+    return {
+      name: row._id, title: row.title, description: row.description,
+      content: row.content, tags: JSON.parse(row.tags),
+    }
+  }
+
+  // ====================================================================
   // session.notepad.* (only when sessionId is present)
   // ====================================================================
   if (ctx.sessionId) {
@@ -341,9 +498,57 @@ function buildGlobalFunctions(
       }
       return rows.map(r => r.key)
     }
+
+    // ====================================================================
+    // session.beginTask / session.endTask
+    // ====================================================================
+    fns._api_session_begin_task = async (description: string) => {
+      const session = ctx.appDb.prepare(
+        "SELECT task_stack, messages FROM agent_sessions WHERE _id = ?"
+      ).get(sid) as { task_stack: string; messages: string } | undefined
+      if (!session) throw new Error("Session not found")
+
+      const stack = JSON.parse(session.task_stack) as { task_id: string; description: string; message_index: number }[]
+      const messages = JSON.parse(session.messages)
+      const taskId = crypto.randomUUID()
+      const depth = stack.length + 1
+      if (depth > 4) throw new Error("Maximum task nesting depth (4) exceeded")
+
+      stack.push({ task_id: taskId, description, message_index: messages.length })
+      ctx.appDb.prepare("UPDATE agent_sessions SET task_stack = ?, modified_on = ? WHERE _id = ?")
+        .run(JSON.stringify(stack), new Date().toISOString(), sid)
+
+      return { task_id: taskId, depth }
+    }
+
+    fns._api_session_end_task = async (summary: string) => {
+      const session = ctx.appDb.prepare(
+        "SELECT task_stack FROM agent_sessions WHERE _id = ?"
+      ).get(sid) as { task_stack: string } | undefined
+      if (!session) throw new Error("Session not found")
+
+      const stack = JSON.parse(session.task_stack) as { task_id: string; description: string; message_index: number }[]
+      if (stack.length === 0) throw new Error("No open task scope to end")
+
+      stack.pop()
+      ctx.appDb.prepare("UPDATE agent_sessions SET task_stack = ?, modified_on = ? WHERE _id = ?")
+        .run(JSON.stringify(stack), new Date().toISOString(), sid)
+
+      return { messages_collapsed: 0 }
+    }
   }
 
   return fns
+}
+
+function globToRegex(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "<<<GLOBSTAR>>>")
+    .replace(/\*/g, "[^/]*")
+    .replace(/<<<GLOBSTAR>>>/g, ".*")
+    .replace(/\?/g, ".")
+  return new RegExp(`^${escaped}$`)
 }
 
 function buildPreamble(hasSession: boolean): string {
@@ -370,6 +575,21 @@ const llm = {
 
 const functions = {
   call: async (name, fnArgs) => _api_fn_callAsync(name, fnArgs || {}),
+};
+
+const files = {
+  list: async (pattern) => _api_files_listAsync(pattern),
+  info: async (id) => _api_files_infoAsync(id),
+  create: async (path, mime) => _api_files_createAsync(path, mime),
+  delete: async (id) => { await _api_files_deleteAsync(id); },
+  promote: async (id) => { await _api_files_promoteAsync(id); },
+  readText: async (id, options) => _api_files_read_textAsync(id, options || {}),
+  writeText: async (id, content) => { await _api_files_write_textAsync(id, content); },
+};
+
+const skills = {
+  list: async (tag) => _api_skills_listAsync(tag),
+  read: async (name) => _api_skills_readAsync(name),
 };
 
 const __libCache = {};
@@ -413,6 +633,8 @@ const session = {
     delete: async (key) => _api_scratch_deleteAsync(key),
     keys: async (prefix) => _api_scratch_keysAsync(prefix),
   },
+  beginTask: async (description) => _api_session_begin_taskAsync(description),
+  endTask: async (summary) => _api_session_end_taskAsync(summary),
 };
 `
   }

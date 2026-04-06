@@ -8,6 +8,11 @@ import { createDatabaseTools } from "./database"
 import { createLlmTools } from "./llm"
 import { createCodeExecutionTools } from "./code-execution"
 import { createDynamicTools } from "./dynamic"
+import { createFileTools } from "./files"
+import { createUIComponentTools } from "./ui-components"
+import { createSkillTools } from "./skills"
+import { createNetworkTools } from "./network"
+import { createAgentForkTools } from "./agent-fork"
 
 export type { MetaToolContext }
 
@@ -24,6 +29,11 @@ export function createAllTools(ctx: MetaToolContext): ToolSet {
     ...createDatabaseTools(ctx),
     ...createLlmTools(ctx),
     ...createCodeExecutionTools(ctx),
+    ...createFileTools(ctx),
+    ...createUIComponentTools(ctx),
+    ...createSkillTools(ctx),
+    ...createNetworkTools(ctx),
+    ...createAgentForkTools(ctx),
     ...createDynamicTools(ctx),
   } as ToolSet
 }

@@ -1144,6 +1144,34 @@ Ask the user a question in the chat panel. Pauses until the user replies.
 
 **Pauses:** Yes.
 
+### `file_view`
+
+Load an image or PDF page into the main LLM's context as a vision input. The visual equivalent of `file_read_text` — call this when you need to *see* a file. Essential for scanned PDFs.
+
+For images, the file is loaded directly. For PDFs, requested pages are rendered to PNG (via `pdf.pageToImage`). The tool result contains image content parts that appear inline in the conversation — the LLM sees the actual visual content on the next turn.
+
+```json
+{
+  "name": "file_view",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "File ID (image or PDF)" },
+      "pages": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "For PDFs: which pages to view (1-based). Omit to view page 1 only. Max 5 pages per call."
+      },
+      "max_width": { "type": "number", "description": "Max pixel width. Large images are downscaled to stay within token budget. Default: 1024." },
+      "dpi": { "type": "number", "description": "For PDFs: rendering resolution. Default: 150." }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+**Returns:** Image content parts (one per page/image) injected into the tool result as vision inputs. Also returns `{ pages_rendered: number }` as text.
+
 ---
 
 ## Web & Network
@@ -1833,6 +1861,7 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | `file_download`          | Files             | No     | Download a URL into the file workspace                                  |
 | `promote_file`           | Files             | No     | Promote a file's scope (session→agent)                                  |
 | `file_search`            | Files             | No     | Search across visible files (text, PDF, spreadsheet)                    |
+| `file_view`              | Files             | No     | Load image or PDF page(s) into the main LLM context as vision input    |
 | `spreadsheet_*`          | Files             | No     | Spreadsheet operations (see [Files](./Files.md))                        |
 | `pdf_*`                  | Files             | No     | PDF operations (see [Files](./Files.md))                                |
 | `image_*`                | Files             | No     | Image operations (see [Files](./Files.md))                              |

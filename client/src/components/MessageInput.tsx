@@ -6,15 +6,19 @@ export default function MessageInput() {
   const cancelSession = useAppStore((s) => s.cancelSession)
   const sessionStatus = useAppStore((s) => s.sessionStatus)
   const activeSessionId = useAppStore((s) => s.activeSessionId)
+  const pendingAttachments = useAppStore((s) => s.pendingAttachments)
+  const uploadFiles = useAppStore((s) => s.uploadFiles)
+  const removeAttachment = useAppStore((s) => s.removeAttachment)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isRunning = sessionStatus === "running"
   const canSend = activeSessionId && !isRunning
 
   const handleSend = () => {
     const text = textareaRef.current?.value.trim()
-    if (!text || !canSend) return
-    sendMessage(text)
+    if ((!text && pendingAttachments.length === 0) || !canSend) return
+    sendMessage(text || "(files attached)")
     textareaRef.current!.value = ""
     textareaRef.current!.style.height = "auto"
   }
@@ -33,9 +37,64 @@ export default function MessageInput() {
     el.style.height = Math.min(el.scrollHeight, 160) + "px"
   }
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    uploadFiles(Array.from(files))
+    e.target.value = ""
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length > 0 && canSend) uploadFiles(files)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+  }
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
+
   return (
-    <div className="border-top p-3">
+    <div className="border-top p-3" onDrop={handleDrop} onDragOver={handleDragOver}>
+      {pendingAttachments.length > 0 && (
+        <div className="d-flex flex-wrap gap-1 mb-2">
+          {pendingAttachments.map((f) => (
+            <span key={f.id} className="badge bg-secondary d-flex align-items-center gap-1">
+              {f.path} ({formatSize(f.size)})
+              <button
+                type="button"
+                className="btn-close btn-close-white"
+                style={{ fontSize: "0.6em" }}
+                onClick={() => removeAttachment(f.id)}
+              />
+            </span>
+          ))}
+        </div>
+      )}
       <div className="input-group">
+        <button
+          className="btn btn-outline-secondary"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!canSend}
+          title="Attach files"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4.5 3a2.5 2.5 0 0 1 5 0v9a1.5 1.5 0 0 1-3 0V5a.5.5 0 0 1 1 0v7a.5.5 0 0 0 1 0V3a1.5 1.5 0 1 0-3 0v9a2.5 2.5 0 0 0 5 0V5a.5.5 0 0 1 1 0v7a3.5 3.5 0 1 1-7 0V3z"/>
+          </svg>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="d-none"
+          onChange={handleFileSelect}
+        />
         <textarea
           ref={textareaRef}
           className="form-control"

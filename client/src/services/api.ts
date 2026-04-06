@@ -59,6 +59,18 @@ export interface StateEntry {
   modified_on: string
 }
 
+export interface FileEntry {
+  id: string
+  path: string
+  size: number
+  mime_type: string | null
+  scope: "session" | "agent"
+  session_id: string | null
+  source: string
+  created_on: string
+  modified_on: string
+}
+
 // --- API ---
 
 export const api = {
@@ -93,4 +105,31 @@ export const api = {
     post<{ ok: boolean }>(`${BASE}/state/${encodeURIComponent(key)}?agent_id=${agentId}`, { value }),
   deleteState: (key: string, agentId = "default") =>
     del<{ deleted: boolean }>(`${BASE}/state/${encodeURIComponent(key)}?agent_id=${agentId}`),
+
+  // Files
+  listFiles: (agentId = "default", sessionId?: string) => {
+    const params = new URLSearchParams({ agent_id: agentId })
+    if (sessionId) params.set("session_id", sessionId)
+    return request<FileEntry[]>(`${BASE}/files?${params}`)
+  },
+  uploadFiles: async (files: File[], agentId = "default", sessionId?: string): Promise<FileEntry[]> => {
+    const form = new FormData()
+    form.set("agent_id", agentId)
+    if (sessionId) form.set("session_id", sessionId)
+    for (const f of files) form.append("files", f)
+    const res = await fetch(`${BASE}/files/upload`, { method: "POST", body: form })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(body.error ?? `HTTP ${res.status}`)
+    }
+    return res.json()
+  },
+  getFileDownloadUrl: (id: string) => `${BASE}/files/${id}/download`,
+  deleteFile: (id: string) => del<{ deleted: boolean }>(`${BASE}/files/${id}`),
+  promoteFile: (id: string) => post<FileEntry>(`${BASE}/files/${id}/promote`, {}),
+
+  // Agents (create)
+  createAgent: (id: string, name: string, system_prompt?: string) =>
+    post<Agent>(`${BASE}/agents`, { id, name, system_prompt }),
+  deleteAgent: (id: string) => del<{ deleted: boolean }>(`${BASE}/agents/${id}`),
 }

@@ -187,10 +187,12 @@ function initSchema(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS agent_files (
       _id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(_id) ON DELETE CASCADE,
+      path TEXT NOT NULL,
       mime_type TEXT,
       size INTEGER NOT NULL DEFAULT 0,
       disk_path TEXT NOT NULL,
+      session_id TEXT REFERENCES agent_sessions(_id) ON DELETE CASCADE,
       source TEXT NOT NULL DEFAULT 'upload',
       source_session_id TEXT,
       created_on TEXT NOT NULL,

@@ -56,7 +56,7 @@ files.writeBytes(id: string, offset: number, base64data: string): Promise<void>
 files.appendBytes(id: string, base64data: string): Promise<void>
 // Format-specific (see Files.md for full details)
 files.spreadsheet.*  // ExcelJS-backed spreadsheet operations
-files.pdf.*          // pdf-lib + pdfjs-dist PDF operations
+files.pdf.*          // pdf-lib + pdfjs-dist PDF operations (includes pageToImage for rendering pages as PNG)
 files.image.*        // sharp-backed image operations
 
 // Functions (call agent-created backend functions — see Built-in Tools.md)

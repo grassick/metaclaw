@@ -268,6 +268,7 @@ Server-side libraries: **pdf-lib** (MIT) for creation and editing + **pdfjs-dist
 |---|---|
 | `files.pdf.info(fileId)` | Page count, page sizes, title, author, whether it has forms |
 | `files.pdf.extractText(fileId, options?)` | Extract text, optionally from specific pages: `{ pages: [1, 2, 3] }` |
+| `files.pdf.pageToImage(fileId, pageNum, options?)` | Render a PDF page as a PNG image file. Options: `{ dpi?: number }` (default 150). Returns `{ id, path, width, height }` of the new image file. Essential for scanned PDFs where `extractText` returns nothing — the image can then be passed to a vision model. |
 | `files.pdf.addPage(fileId, options?)` | Add a blank page. Options: `{ size?, orientation? }` |
 | `files.pdf.deletePage(fileId, pageNum)` | Remove a page |
 | `files.pdf.addText(fileId, page, text, position, style)` | Place text at coordinates with font, size, color |
@@ -490,12 +491,40 @@ Search across all files visible to the current session.
 
 **Returns:** `{ matches: { file_id: string, path: string, mime_type: string, excerpts: { line?: number, text: string }[] }[], files_searched: number, truncated: boolean }`
 
+### `file_view`
+
+Load an image or PDF page into the main LLM's context as a vision input. This is the visual equivalent of `file_read_text` — the agent calls it when it needs to *see* a file rather than read its text. The tool result contains image content parts that the AI SDK injects into the conversation, so the main LLM sees the actual image on the next turn.
+
+For images, the file is loaded directly. For PDFs, each requested page is rendered to a PNG first (via `pdf.pageToImage` under the hood). For scanned PDFs where `extractText` returns nothing, this is the primary way to get content — the main LLM reads the page visually.
+
+```json
+{
+  "name": "file_view",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "File ID (image or PDF)" },
+      "pages": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "For PDFs: which pages to view (1-based). Omit to view just page 1. Max 5 pages per call."
+      },
+      "max_width": { "type": "number", "description": "Max pixel width for the image. Large images are downscaled to stay within token budget. Default: 1024." },
+      "dpi": { "type": "number", "description": "For PDFs: rendering resolution. Default: 150." }
+    },
+    "required": ["id"]
+  }
+}
+```
+
+**Returns:** Image content parts (one per page/image) injected into the tool result as vision inputs. The LLM sees them inline in the conversation. Also returns `{ pages_rendered: number }` as text metadata.
+
 ### Format-specific meta-tools
 
 Each format-specific API method also has a corresponding meta-tool. The naming convention is `spreadsheet_*`, `pdf_*`, `image_*`:
 
 - `spreadsheet_list_sheets`, `spreadsheet_read_range`, `spreadsheet_write_range`, `spreadsheet_read_cell`, `spreadsheet_write_cell`, `spreadsheet_add_sheet`, `spreadsheet_delete_sheet`, `spreadsheet_insert_rows`, `spreadsheet_delete_rows`, `spreadsheet_set_format`, `spreadsheet_auto_filter`, `spreadsheet_get_sheet_summary`
-- `pdf_info`, `pdf_extract_text`, `pdf_add_page`, `pdf_delete_page`, `pdf_add_text`, `pdf_add_image`, `pdf_get_form_fields`, `pdf_fill_form`, `pdf_merge`, `pdf_split_pages`
+- `pdf_info`, `pdf_extract_text`, `pdf_page_to_image`, `pdf_add_page`, `pdf_delete_page`, `pdf_add_text`, `pdf_add_image`, `pdf_get_form_fields`, `pdf_fill_form`, `pdf_merge`, `pdf_split_pages`
 - `image_info`, `image_resize`, `image_crop`, `image_convert`, `image_composite`, `image_to_base64`
 
 Parameter schemas follow the same structure as the sandbox API arguments. See the sandbox API tables above for parameter details.
@@ -517,7 +546,8 @@ The file scope context (current session ID) is injected into the sandbox at crea
 | Package | Purpose | License |
 |---|---|---|
 | **exceljs** | Spreadsheet read/write with formatting and formulas | MIT |
-| **pdfjs-dist** | PDF text extraction (Mozilla's PDF.js for Node) | Apache 2.0 |
+| **pdfjs-dist** | PDF text extraction and page rendering (Mozilla's PDF.js for Node) | Apache 2.0 |
+| **canvas** | Node canvas for pdfjs-dist page rendering (`pdf.pageToImage`) | MIT |
 | **pdf-lib** | PDF creation and editing (add pages, text, images, fill forms, merge) | MIT |
 | **sharp** | Image resize, crop, convert | Apache 2.0 |
 | **file-type** | MIME detection via magic bytes | MIT |

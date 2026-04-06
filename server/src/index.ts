@@ -4,6 +4,7 @@ import { SessionController } from "./agent/SessionController"
 import { createAgentRoutes } from "./routes/agents"
 import { createSessionRoutes } from "./routes/sessions"
 import { createEventRoutes } from "./routes/events"
+import { createFileRoutes } from "./routes/files"
 
 const PORT = process.env.PORT ?? 3001
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
@@ -31,6 +32,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/agents", createAgentRoutes(db, OPENROUTER_API_KEY))
 app.use("/api/sessions", createSessionRoutes(sessionController))
 app.use("/api/events", createEventRoutes())
+app.use("/api/files", createFileRoutes(db))
 
 // State endpoints for frontend useAgentState hook
 app.get("/api/state", (req, res) => {

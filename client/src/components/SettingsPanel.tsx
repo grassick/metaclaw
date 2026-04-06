@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react"
 import { useAppStore } from "../stores/sessionStore"
-import { api, type StateEntry } from "../services/api"
+import { api, type StateEntry, type FileEntry } from "../services/api"
 
 // ── System Prompt Tab ────────────────────────────────────────────────
 
@@ -190,9 +190,116 @@ function StateViewer() {
   )
 }
 
+// ── File Browser Tab ─────────────────────────────────────────────────
+
+function FileBrowser() {
+  const activeAgentId = useAppStore((s) => s.activeAgentId)
+  const [files, setFiles] = useState<FileEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api.listFiles(activeAgentId)
+      setFiles(data)
+    } finally {
+      setLoading(false)
+    }
+  }, [activeAgentId])
+
+  useEffect(() => {
+    load()
+    const handler = () => load()
+    window.addEventListener("metaclaw:file-change", handler)
+    return () => window.removeEventListener("metaclaw:file-change", handler)
+  }, [load])
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
+
+  const handleDelete = async (id: string) => {
+    await api.deleteFile(id)
+    load()
+  }
+
+  const handlePromote = async (id: string) => {
+    await api.promoteFile(id)
+    load()
+  }
+
+  return (
+    <div>
+      <h6>Files</h6>
+      {loading ? (
+        <div className="text-muted small">Loading...</div>
+      ) : files.length === 0 ? (
+        <p className="text-muted small">No files.</p>
+      ) : (
+        <table className="table table-sm small">
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Size</th>
+              <th>Scope</th>
+              <th>Type</th>
+              <th style={{ width: 80 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {files.map((f) => (
+              <tr key={f.id}>
+                <td className="font-monospace">
+                  <a
+                    href={api.getFileDownloadUrl(f.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Download"
+                  >
+                    {f.path}
+                  </a>
+                </td>
+                <td>{formatSize(f.size)}</td>
+                <td>
+                  <span className={`badge ${f.scope === "agent" ? "text-bg-primary" : "text-bg-secondary"}`}>
+                    {f.scope}
+                  </span>
+                </td>
+                <td className="text-muted">{f.mime_type}</td>
+                <td>
+                  <div className="d-flex gap-1">
+                    {f.scope === "session" && (
+                      <button
+                        className="btn btn-sm p-0 text-primary"
+                        title="Promote to agent scope"
+                        onClick={() => handlePromote(f.id)}
+                      >
+                        ^
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-sm p-0 text-danger"
+                      title="Delete"
+                      onClick={() => handleDelete(f.id)}
+                    >
+                      x
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
 // ── Main SettingsPanel ───────────────────────────────────────────────
 
-type Tab = "prompt" | "state"
+type Tab = "prompt" | "state" | "files"
 
 export default function SettingsPanel({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("prompt")
@@ -222,11 +329,20 @@ export default function SettingsPanel({ onClose }: { onClose: () => void }) {
               State
             </button>
           </li>
+          <li className="nav-item">
+            <button
+              className={`nav-link ${tab === "files" ? "active" : ""}`}
+              onClick={() => setTab("files")}
+            >
+              Files
+            </button>
+          </li>
         </ul>
 
         <div className="p-3 flex-grow-1 overflow-auto">
           {tab === "prompt" && <SystemPromptEditor />}
           {tab === "state" && <StateViewer />}
+          {tab === "files" && <FileBrowser />}
         </div>
       </div>
     </div>
