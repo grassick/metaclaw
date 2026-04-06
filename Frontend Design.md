@@ -269,7 +269,7 @@ Sessions within the same agent are independent conversations, but they share:
 - `agent_secrets` (global — shared across all agents)
 
 Sessions within the same **project** additionally share:
-- Project-scoped files (`agent_files` where `scope_type = 'project'`)
+- Project-scoped files (`agent_files` where `project_id` matches)
 - Project-scoped state (`agent_state` where `project_id` matches)
 - Project context instructions (injected into system prompt)
 
@@ -279,7 +279,7 @@ This means:
 1. Session A creates a tool. Session B (same agent) can immediately use it.
 2. Session A modifies the system prompt. Session B won't see the change until its next compaction.
 3. Session A writes to `state.set('counter', 5)`. Session B reads `state.get('counter')` and gets 5 (agent-global state is shared).
-4. Session A writes to `state.set('filing_status', 'mfj', { project: true })`. Only sessions in the same project see it.
+4. Session A (in a project) writes to `state.set('filing_status', 'mfj')`. This automatically targets project scope — only sessions in the same project see it.
 5. Both sessions write to the same state key — last write wins, no conflict resolution.
 6. Files uploaded in Session A are session-scoped by default — Session B doesn't see them unless they're promoted or both sessions belong to the same project.
 7. Different agents are fully isolated (separate tools, state, skills, sessions, projects) except for secrets.
@@ -362,7 +362,7 @@ event: sessions:list
 data: {"action":"created","id":"sess_new"}
 
 event: file:created
-data: {"id":"f_abc123","path":"output/report.xlsx","size":45200,"mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","scope_type":"project","scope_id":"taxes-2025","source_session_id":"sess_123"}
+data: {"id":"f_abc123","path":"output/report.xlsx","size":45200,"mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","scope":"project","project_id":"taxes-2025","source_session_id":"sess_123"}
 
 event: file:modified
 data: {"id":"f_abc123","path":"output/report.xlsx","size":46100,"modified_on":"2026-02-25T14:30:00Z"}
@@ -403,8 +403,8 @@ User actions go through normal REST calls. These don't need a persistent connect
 | Create a new session | POST | `/sessions` (body includes optional `project_id`) |
 | Continue after token limit | POST | `/sessions/:id/continue` |
 | Invoke a backend function | POST | `/agents/:agentId/functions/:name/invoke` |
-| Read a state value | GET | `/state/:key` (query param `project_id` for project-scoped) |
-| Write a state value | POST | `/state/:key` (query param `project_id` for project-scoped) |
+| Read a state value | GET | `/state/:key` (optional query param `project_id` — frontend derives this from the active session's project) |
+| Write a state value | POST | `/state/:key` (optional query param `project_id` — frontend derives this from the active session's project) |
 | Upload files | POST | `/files/upload` (multipart/form-data, `session_id` required, multi-file, optional `extract=true`) |
 | Download a file | GET | `/files/:id/download` |
 | List files | GET | `/files` (query params: `session_id`, `scope`) |

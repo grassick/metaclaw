@@ -160,17 +160,19 @@ Reusable React components / "pages" the agent has created. Scoped per agent.
 
 ### `agent_state`
 
-Key-value store for persistent agent state. Scoped per agent, optionally per project.
+Key-value store for persistent agent state. Scoped per agent, with optional project-level partitioning. State is **automatically scoped by session context** — the meta-tools and sandbox API resolve the correct scope based on the session's `project_id`, so callers rarely need to think about it. See [Built-in Tools — State Management](./Built-in%20Tools.md#state-management).
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `agent_id` | text | FK to `agents` |
-| `project_id` | text | FK to `agent_projects`. Null for agent-global state. |
-| `key` | text | State key (primary key is `(agent_id, project_id, key)` where `project_id` can be null) |
+| `project_id` | text | FK to `agent_projects`. Empty string `''` for agent-global state. |
+| `key` | text | State key |
 | `value` | text | Arbitrary JSON value |
 | `modified_on` | text | ISO 8601 |
 
-The same key can exist at both agent scope (`project_id = NULL`) and project scope (`project_id = 'taxes-2025'`) without collision.
+Primary key: `(agent_id, project_id, key)`. Agent-global state uses `project_id = ''` (empty string) rather than NULL — SQLite treats NULLs as distinct in uniqueness checks, so a nullable composite PK would allow duplicate agent-global keys. The empty string sentinel avoids this; the meta-tools and sandbox API handle the mapping transparently.
+
+The same key can exist at both agent scope (`project_id = ''`) and project scope (`project_id = 'taxes-2025'`) without collision. Reads in a project session check project scope first, then fall back to agent-global. Writes in a project session target project scope by default. The `global` flag on meta-tools / sandbox API bypasses this and accesses agent-global state directly.
 
 ### `agent_secrets`
 
@@ -261,7 +263,7 @@ Lightweight scoping layer between agents and sessions. A project is a persistent
 |--------|------|-------------|
 | `_id` | text | Unique slug (e.g. `taxes-2025`) |
 | `agent_id` | text | FK to `agents` |
-| `name` | text | Human-readable display name (e.g. "2025 Taxes") |
+| `display_name` | text | Human-readable display name (e.g. "2025 Taxes") |
 | `description` | text | Brief description |
 | `context` | text | Instructions injected into system prompt when a session operates within this project. Agent-editable (like the observations section of the system prompt). |
 | `created_on` | text | ISO 8601 |
@@ -274,18 +276,21 @@ File workspace metadata. Actual file data lives on disk in `files/`. Files are s
 | Column | Type | Description |
 |--------|------|-------------|
 | `_id` | text | Short ID (`f_` prefix + 8 alphanumeric chars via nanoid, e.g. `f_x7kQ9mBn`) |
+| `agent_id` | text | FK to `agents` (always set — identifies which agent owns the file) |
 | `path` | text | Logical file path (e.g. `forms/w2-employer1.pdf`). Slash-separated, no leading slash. |
 | `mime_type` | text | Detected MIME type (via magic bytes) |
 | `size` | integer | Size in bytes |
 | `disk_path` | text | Path within `files/` directory (ID-based on disk, unrelated to logical `path`) |
-| `scope_type` | text | `session`, `project`, or `agent` |
-| `scope_id` | text | Session ID, project ID, or null (for agent scope) |
+| `session_id` | text | FK to `agent_sessions`. Set for session-scoped files, null otherwise. `ON DELETE CASCADE`. |
+| `project_id` | text | FK to `agent_projects`. Set for project-scoped files, null otherwise. `ON DELETE CASCADE`. |
 | `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
 | `source_session_id` | text | Which session uploaded or created the file (provenance, not access control) |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-Uniqueness constraint: `(scope_type, scope_id, path)`. Files uploaded in unscoped sessions are session-scoped by default; files in project sessions are project-scoped by default. See [Files — File Scoping](./Files.md#file-scoping) for full rules.
+Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, `project_id IS NOT NULL` → project-scoped, both null → agent-scoped. No uniqueness constraint on paths — a session can see files from session, project, and agent scopes simultaneously, so cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
+
+Files uploaded in unscoped sessions are session-scoped by default; files in project sessions are project-scoped by default. See [Files — File Scoping](./Files.md#file-scoping) for full rules.
 
 ### `agent_config_history`
 
@@ -316,7 +321,7 @@ On each session init and at compaction time, dynamically build the system prompt
 7. Available secret key names from `agent_secrets` (names only, not values — so the agent knows which API keys exist when creating tools)
 8. A summary of available skills (name + title + description + tags from `agent_skills` for this agent — see [Skills](./Skills.md))
 9. A summary of connected MCP servers and their tools (server name + tool names from `agent_mcp_servers` for this agent — see [MCP](./MCP.md))
-10. A summary of available projects (name + description from `agent_projects` for this agent)
+10. A summary of available projects (display_name + description from `agent_projects` for this agent)
 11. **Current project context** (from `agent_projects.context`, if the session has a `project_id`) — injected as a dedicated section so the agent knows the project's accumulated instructions and domain knowledge
 12. **Current project file list** (paths of files scoped to the project, so the agent knows what's available without calling `file_list`)
 13. The session notepad content (from `agent_sessions.notepad` — see [Session Notepad](./Session%20Notepad.md))

@@ -25,11 +25,11 @@ fetch(url: string, options?: FetchOptions): Promise<FetchResponse>
 web.search(query: string, options?: SearchOptions): Promise<SearchResults>
 web.read(url: string, options?: ReadOptions): Promise<PageContent>
 
-// Key-value state (agent-global or project-scoped)
-state.get(key: string, options?: { project?: boolean }): Promise<any | null>
-state.set(key: string, value: any, options?: { project?: boolean }): Promise<void>
-state.delete(key: string, options?: { project?: boolean }): Promise<boolean>
-state.keys(prefix?: string, options?: { project?: boolean }): Promise<string[]>
+// Key-value state (auto-scoped: project if in a project session, else agent-global)
+state.get(key: string, options?: { global?: boolean }): Promise<any | null>
+state.set(key: string, value: any, options?: { global?: boolean }): Promise<void>
+state.delete(key: string, options?: { global?: boolean }): Promise<boolean>
+state.keys(prefix?: string, options?: { global?: boolean }): Promise<string[]>
 
 // Database (agent's own SQLite DB)
 db.sql(sql: string, params?: any[]): Promise<QueryResult | WriteResult>
@@ -150,14 +150,14 @@ interface FetchResponse {
 
 ### `state`
 
-Direct access to the `agent_state` key-value store. Same data the meta-tools `get_state`/`set_state` operate on. All methods accept an optional `options` parameter with `{ project: boolean }` — when `true` and the session belongs to a project, operates on project-scoped state instead of agent-global state.
+Direct access to the `agent_state` key-value store. Same data the meta-tools `get_state`/`set_state` operate on. State is **automatically scoped by session context**: in a project session, reads check project scope first then fall back to agent-global; writes target project scope. Outside a project session, everything is agent-global. Pass `{ global: true }` to bypass automatic scoping and access agent-global state directly.
 
 | Method | Description |
 |--------|-------------|
-| `state.get(key, options?)` | Returns the value or `null`. `{ project: true }` reads project-scoped state. |
-| `state.set(key, value, options?)` | Upserts a JSON value. `{ project: true }` writes project-scoped state. |
-| `state.delete(key, options?)` | Returns `true` if the key existed. `{ project: true }` deletes project-scoped state. |
-| `state.keys(prefix?, options?)` | Lists keys, optionally filtered by prefix. `{ project: true }` lists project-scoped keys. |
+| `state.get(key, options?)` | Returns the value or `null`. In a project session, checks project scope first, then agent-global. `{ global: true }` reads only agent-global. |
+| `state.set(key, value, options?)` | Upserts a JSON value. In a project session, writes to project scope. `{ global: true }` writes to agent-global. |
+| `state.delete(key, options?)` | Returns `true` if the key existed. In a project session, deletes from project scope. `{ global: true }` deletes from agent-global. |
+| `state.keys(prefix?, options?)` | Lists keys, optionally filtered by prefix. In a project session, returns keys from both project and agent-global scopes. `{ global: true }` lists only agent-global keys. |
 
 ### `db`
 
@@ -437,7 +437,7 @@ When code runs via direct function invocation (`POST /agents/:agentId/functions/
 
 Everything else works the same — `llm.generate()`, `fetch`, `web.*`, `state.*`, `db.*`, `files.*`, `skills.*`, `mcp.*`, `functions.call()`, `require()`, `secrets`, and all utilities. A function that needs to call the LLM (e.g. backing a "summarize this" button) can do so directly. Usage guardrails on spending and token limits apply at the agent level regardless of whether the LLM call originated from a tool or a function.
 
-Note: `files.*` in function context only sees agent-global files (no session or project scope). `state.*` with `{ project: true }` is a no-op in function context (there's no project). Functions that need to access project-scoped files or state should accept the project ID as a parameter and query directly via `db.sql`.
+Note: `files.*` in function context only sees agent-global files (no session or project scope). `state.*` always operates at agent-global scope in function context (there's no session or project to scope to). The `{ global: true }` option has no effect. Functions that need to access project-scoped files or state should accept the project ID as a parameter and query directly via `db.sql`.
 
 ---
 

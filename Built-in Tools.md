@@ -126,7 +126,7 @@ Supports multiple edit operations so the agent doesn't have to replace the entir
 
 ## State Management
 
-Key-value store backed by the `agent_state` table. Values are arbitrary JSON. State can be agent-global or project-scoped — the `project` parameter controls which level is accessed.
+Key-value store backed by the `agent_state` table. Values are arbitrary JSON. State is **automatically scoped by session context**: when the session belongs to a project, reads check project scope first then fall back to agent-global; writes target project scope. When the session has no project, everything operates on agent-global scope. Use `global: true` to explicitly bypass project scope and access agent-global state from within a project session.
 
 ### `get_state`
 
@@ -137,7 +137,7 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
     "type": "object",
     "properties": {
       "key": { "type": "string", "description": "The state key to read" },
-      "project": { "type": "boolean", "description": "If true, read from project-scoped state (requires the session to belong to a project). Default: false (agent-global)." }
+      "global": { "type": "boolean", "description": "If true, read from agent-global state even when in a project session. Default: false (automatic scoping)." }
     },
     "required": ["key"]
   }
@@ -145,6 +145,8 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
 ```
 
 **Returns:** `{ value: any | null }` — `null` if the key doesn't exist.
+
+Read behavior: in a project session, checks project-scoped state first; if not found, falls back to agent-global. With `global: true`, skips project scope entirely.
 
 ### `set_state`
 
@@ -156,7 +158,7 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
     "properties": {
       "key": { "type": "string", "description": "The state key to write" },
       "value": { "description": "Any JSON-serializable value" },
-      "project": { "type": "boolean", "description": "If true, write to project-scoped state (requires the session to belong to a project). Default: false (agent-global)." }
+      "global": { "type": "boolean", "description": "If true, write to agent-global state even when in a project session. Default: false (automatic scoping)." }
     },
     "required": ["key", "value"]
   }
@@ -164,6 +166,8 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
 ```
 
 **Returns:** `{ ok: true }`
+
+Write behavior: in a project session, writes to project scope. Outside a project, writes to agent-global. With `global: true`, always writes to agent-global.
 
 ### `delete_state`
 
@@ -174,7 +178,7 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
     "type": "object",
     "properties": {
       "key": { "type": "string", "description": "The state key to delete" },
-      "project": { "type": "boolean", "description": "If true, delete from project-scoped state. Default: false (agent-global)." }
+      "global": { "type": "boolean", "description": "If true, delete from agent-global state even when in a project session. Default: false (automatic scoping)." }
     },
     "required": ["key"]
   }
@@ -192,7 +196,7 @@ Key-value store backed by the `agent_state` table. Values are arbitrary JSON. St
     "type": "object",
     "properties": {
       "prefix": { "type": "string", "description": "Optional prefix to filter keys by" },
-      "project": { "type": "boolean", "description": "If true, list project-scoped keys. Default: false (agent-global)." }
+      "global": { "type": "boolean", "description": "If true, list only agent-global keys even when in a project session. Default: false (returns keys from both project and agent-global scopes)." }
     },
     "required": []
   }
@@ -1712,7 +1716,7 @@ If only metadata fields (`display_name`, `description`) are provided without an 
 
 ### `delete_project`
 
-Delete a project. Files scoped to the project are re-scoped to agent-global (not deleted). Sessions scoped to the project become unscoped.
+Delete a project. Files scoped to the project are deleted. Sessions scoped to the project become unscoped. Promote any files you want to keep before deleting.
 
 ```json
 {
@@ -1749,7 +1753,7 @@ Convert the current session into a project. Creates a new project, associates th
 }
 ```
 
-**Returns:** `{ id: string, name: string, files_promoted: number }`
+**Returns:** `{ id: string, name: string, files_deleted: number }`
 
 ### `read_project`
 
@@ -1875,10 +1879,10 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | ------------------------ | ----------------- | ------ | ----------------------------------------------------------------------- |
 | `read_system_prompt`     | Self-modification | No     | Read the current stored system prompt                                   |
 | `edit_system_prompt`     | Self-modification | No     | Edit the system prompt (replace, find/replace, append, prepend, delete) |
-| `get_state`              | State             | No     | Read a state key (agent-global or project-scoped)                       |
-| `set_state`              | State             | No     | Write a state key (agent-global or project-scoped)                      |
-| `delete_state`           | State             | No     | Delete a state key                                                      |
-| `list_state_keys`        | State             | No     | List keys with optional prefix filter                                   |
+| `get_state`              | State             | No     | Read a state key (auto-scoped to project or agent-global)               |
+| `set_state`              | State             | No     | Write a state key (auto-scoped to project or agent-global)              |
+| `delete_state`           | State             | No     | Delete a state key (auto-scoped to project or agent-global)             |
+| `list_state_keys`        | State             | No     | List keys with optional prefix filter (auto-scoped)                     |
 | `db_sql`                 | Database          | No     | Run any SQL on the agent's SQLite DB                                    |
 | `db_schema`              | Database          | No     | List all tables and their columns                                       |
 | `create_tool`            | Tool management   | No     | Create a new agent-defined tool                                         |
@@ -1938,7 +1942,7 @@ Only returns enabled, connected servers. `status` is a runtime value: `connected
 | `list_projects`          | Projects          | No     | List all projects                                                       |
 | `read_project`           | Projects          | No     | Read a project's full definition including context                      |
 | `update_project`         | Projects          | No     | Update project metadata or context instructions                         |
-| `delete_project`         | Projects          | No     | Delete a project (files promoted to agent scope)                        |
+| `delete_project`         | Projects          | No     | Delete a project (project files are deleted; promote first to keep)     |
 | `save_session_as_project`| Projects          | No     | Convert current session into a project                                  |
 | `web_search`             | Web               | No     | Search the web (see [Web](./Web.md))                                    |
 | `web_read`               | Web               | No     | Extract clean readable content from a URL (see [Web](./Web.md))         |

@@ -13,18 +13,19 @@ Files live on disk in a `files/` directory. Metadata lives in `metaclaw.db`.
 | Column | Type | Description |
 |---|---|---|
 | `_id` | text | Short ID (`f_` prefix + 8 alphanumeric chars via nanoid, e.g. `f_x7kQ9mBn`) |
+| `agent_id` | text | FK to `agents` (always set — identifies which agent owns the file) |
 | `path` | text | Logical file path (e.g. `forms/w2-employer1.pdf`). Slash-separated, no leading slash. |
 | `mime_type` | text | Detected MIME type (via magic bytes, not extension) |
 | `size` | integer | Size in bytes |
 | `disk_path` | text | Path within `files/` directory (ID-based on disk, not related to the logical `path`) |
-| `scope_type` | text | `session`, `project`, or `agent` |
-| `scope_id` | text | Session ID, project ID, or null (for agent scope) |
+| `session_id` | text | FK to `agent_sessions`. Set for session-scoped files, null otherwise. `ON DELETE CASCADE`. |
+| `project_id` | text | FK to `agent_projects`. Set for project-scoped files, null otherwise. `ON DELETE CASCADE`. |
 | `source` | text | `upload` (from user), `created` (by agent), `derived` (generated from another file) |
 | `source_session_id` | text | Which session uploaded or created it (provenance, not access control) |
 | `created_on` | text | ISO 8601 |
 | `modified_on` | text | ISO 8601 |
 
-Uniqueness constraint: `(scope_type, scope_id, path)` — the same path can exist in different scopes without collision.
+Scope is derived from the FK columns: `session_id IS NOT NULL` → session-scoped, `project_id IS NOT NULL` → project-scoped, both null → agent-scoped. No uniqueness constraint on paths — since a session sees files from multiple scopes simultaneously, cross-scope path collisions are unavoidable. The file ID is the real identifier; paths are informational metadata.
 
 Disk storage rather than SQLite BLOBs because spreadsheets and PDFs can be 10–50 MB. ExcelJS and pdf-lib work with file paths and Buffers naturally.
 
@@ -65,9 +66,9 @@ Agent files     →  all sessions across all projects see them
 
 `file_list` (and `files.list()` in sandbox) returns files visible to the current session — the union of:
 
-- `scope_type = 'session' AND scope_id = current_session_id`
-- `scope_type = 'project' AND scope_id = current_project_id` (if the session belongs to a project)
-- `scope_type = 'agent' AND scope_id IS NULL`
+- `session_id = current_session_id`
+- `project_id = current_project_id` (if the session belongs to a project)
+- `session_id IS NULL AND project_id IS NULL` (agent-scoped files)
 
 A `scope` filter parameter on `file_list` lets the agent narrow this (e.g. only session files, only project files).
 
@@ -119,7 +120,7 @@ Parameters:
 | `files` | Yes | One or more files (multipart fields) |
 | `extract` | No | If `true` and the file is a zip, extract contents preserving internal directory structure as paths |
 
-The endpoint accepts multiple files in a single request. Each file gets its own `agent_files` row. The response returns an array of `{ id, path, size, mime_type, scope_type, scope_id }`.
+The endpoint accepts multiple files in a single request. Each file gets its own `agent_files` row. The response returns an array of `{ id, path, size, mime_type, scope, session_id?, project_id? }`.
 
 ### Batch upload: folders
 
@@ -137,7 +138,7 @@ When a file with MIME type `application/zip` is uploaded with `extract=true`, th
 
 | Event | When | Payload |
 |---|---|---|
-| `file:created` | Agent creates a new file | `{ id, path, size, mime_type, scope_type, scope_id, source_session_id }` |
+| `file:created` | Agent creates a new file | `{ id, path, size, mime_type, scope, session_id?, project_id?, source_session_id }` |
 | `file:modified` | Agent modifies an existing file | `{ id, path, size, modified_on }` |
 | `file:deleted` | Agent deletes a file | `{ id }` |
 
@@ -159,7 +160,7 @@ The basics — create, list, delete, move files around. Available in every sandb
 
 | Method | Description |
 |---|---|
-| `files.list(pattern?)` | List visible files, optionally filtered by glob pattern on path. Returns `{ id, path, size, mime_type, scope_type, modified_on }[]` |
+| `files.list(pattern?)` | List visible files, optionally filtered by glob pattern on path. Returns `{ id, path, size, mime_type, scope, modified_on }[]` |
 | `files.info(id)` | Full metadata for a single file |
 | `files.create(path, mime?)` | Create a new empty file at the given path, returns `{ id, path }`. Scoped per default rules. |
 | `files.delete(id)` | Remove a file from the workspace |
@@ -324,7 +325,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
 }
 ```
 
-**Returns:** `{ files: { id, path, size, mime_type, scope_type, modified_on }[] }`
+**Returns:** `{ files: { id, path, size, mime_type, scope, modified_on }[] }`
 
 ### `file_info`
 
@@ -341,7 +342,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
 }
 ```
 
-**Returns:** Full metadata object including `scope_type` and `scope_id`.
+**Returns:** Full metadata object including `scope` (derived: `'session'`, `'project'`, or `'agent'`), `session_id`, and `project_id`.
 
 ### `file_read_text`
 
@@ -418,7 +419,7 @@ Corresponding meta-tools for the LLM to call directly (outside of sandbox code).
 }
 ```
 
-**Returns:** `{ id: string, path: string, scope_type: string }`
+**Returns:** `{ id: string, path: string, scope: string }`
 
 ### `file_delete`
 
@@ -455,7 +456,7 @@ Download a URL into the file workspace.
 }
 ```
 
-**Returns:** `{ id: string, path: string, size: number, mime_type: string, scope_type: string }`
+**Returns:** `{ id: string, path: string, size: number, mime_type: string, scope: string }`
 
 ### `promote_file`
 
@@ -477,7 +478,7 @@ Change a file's scope upward. Session → project or agent. Project → agent.
 
 Promoting to `project` requires the current session to belong to a project. Promoting a file that is already at or above the target scope is a no-op.
 
-**Returns:** `{ id: string, scope_type: string, scope_id: string | null }`
+**Returns:** `{ id: string, scope: string, session_id?: string, project_id?: string }`
 
 ### `file_search`
 
